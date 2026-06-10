@@ -1,0 +1,1125 @@
+import { checkAuthState, logoutUser } from "./auth.js";
+import { isOfflineMode } from "../firebase-config.js";
+import { 
+  getClasses, 
+  addClass, 
+  deleteClass, 
+  getStudents, 
+  addStudent, 
+  updateStudent, 
+  deleteStudent, 
+  uploadStudentPhoto, 
+  saveDailyReport, 
+  getStudentReports, 
+  getTodayReports 
+} from "./db.js";
+
+// State Management
+let currentUser = null;
+let currentMadrasa = null;
+let classes = [];
+let students = [];
+let todayReports = {};
+let currentTab = "dashboard";
+
+// Get today's local date string (YYYY-MM-DD)
+const getTodayDateString = () => {
+  const d = new Date();
+  return d.toISOString().split('T')[0];
+};
+
+// Bootstrap modal references
+let addClassModalObj, addStudentModalObj, prevLessonModalObj, newLessonModalObj, dawrahModalObj, extraTrackersModalObj;
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+document.addEventListener("DOMContentLoaded", () => {
+  // Setup modal instances
+  addClassModalObj = new bootstrap.Modal(document.getElementById('addClassModal'));
+  addStudentModalObj = new bootstrap.Modal(document.getElementById('addStudentModal'));
+  prevLessonModalObj = new bootstrap.Modal(document.getElementById('prevLessonModal'));
+  newLessonModalObj = new bootstrap.Modal(document.getElementById('newLessonModal'));
+  dawrahModalObj = new bootstrap.Modal(document.getElementById('dawrahModal'));
+  extraTrackersModalObj = new bootstrap.Modal(document.getElementById('extraTrackersModal'));
+
+  // Run Auth Check
+  checkAuthState("madrasa_admin", async (user, madrasa) => {
+    currentUser = user;
+    currentMadrasa = madrasa;
+    
+    // Set Madrasa details in UI
+    document.getElementById("headerMadrasaName").textContent = madrasa.name;
+    document.getElementById("dashboardUsthadName").textContent = "Usthad " + (madrasa.usthadName || "");
+    
+    // Expiry check
+    if (madrasa.subscriptionExpiry) {
+      const expiryDate = new Date(madrasa.subscriptionExpiry);
+      document.getElementById("expiryAlertDate").textContent = expiryDate.toLocaleDateString();
+      
+      const diffTime = expiryDate.getTime() - Date.now();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 30 && diffDays > 0) {
+        document.getElementById("subscriptionExpiryAlert").classList.remove("d-none");
+      }
+    }
+
+    // Set today's date in UI
+    const today = new Date();
+    document.getElementById("todayDateStr").textContent = today.toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    });
+
+    // Initial load
+    await loadDatabaseData();
+    switchTab("dashboard");
+  });
+
+  // Attach event listeners
+  setupEventListeners();
+});
+
+async function loadDatabaseData() {
+  if (!currentUser) return;
+  const madrasaId = currentUser.madrasaId;
+  try {
+    classes = await getClasses(madrasaId);
+    students = await getStudents(madrasaId);
+    todayReports = await getTodayReports(madrasaId, getTodayDateString());
+  } catch (error) {
+    console.error("Error loading data:", error);
+    showAlert("Failed to load records from database.", "danger");
+  }
+}
+
+// ==========================================
+// ALERT UTILITY
+// ==========================================
+function showAlert(message, type = "success") {
+  const container = document.getElementById("alertContainer");
+  const alertEl = document.createElement("div");
+  alertEl.className = `alert alert-${type} alert-dismissible fade show shadow-md rounded-pill px-4 py-2 border-0`;
+  alertEl.setAttribute("role", "alert");
+  alertEl.innerHTML = `
+    <span class="small"><i class="bi ${type === 'success' ? 'bi-check-circle-fill text-success' : 'bi-exclamation-triangle-fill text-danger'} me-2"></i>${message}</span>
+    <button type="button" class="btn-close py-2" data-bs-dismiss="alert" aria-label="Close"></button>
+  `;
+  container.appendChild(alertEl);
+  setTimeout(() => alertEl.remove(), 4000);
+}
+
+// ==========================================
+// EVENT LISTENERS
+// ==========================================
+function setupEventListeners() {
+  // Handle logouts
+  document.getElementById("logoutBtn").addEventListener("click", async () => {
+    if (confirm("Are you sure you want to sign out?")) {
+      await logoutUser();
+    }
+  });
+
+  // Inline Switch tab listening
+  window.addEventListener('tabchange', (e) => {
+    switchTab(e.detail);
+  });
+
+  // Parent Portal Quick Actions
+  document.getElementById("openParentPortalBtn").addEventListener("click", () => {
+    if (!currentUser) return;
+    const portalUrl = `${window.location.origin}/parent-portal.html?madrasaId=${currentUser.madrasaId}`;
+    window.open(portalUrl, "_blank");
+  });
+
+  document.getElementById("copyParentPortalBtn").addEventListener("click", () => {
+    if (!currentUser) return;
+    const portalUrl = `${window.location.origin}/parent-portal.html?madrasaId=${currentUser.madrasaId}`;
+    navigator.clipboard.writeText(portalUrl)
+      .then(() => showAlert("Parent Portal link copied to clipboard!"))
+      .catch(err => {
+        console.error("Could not copy text: ", err);
+        showAlert("Failed to copy link.", "danger");
+      });
+  });
+
+  document.getElementById("shareParentPortalBtn").addEventListener("click", () => {
+    if (!currentUser) return;
+    const portalUrl = `${window.location.origin}/parent-portal.html?madrasaId=${currentUser.madrasaId}`;
+    if (navigator.share) {
+      navigator.share({
+        title: `${currentMadrasa?.name || "Hifz Progress Portal"} - Parent Portal`,
+        text: `Track your child's Quran memorization progress online:`,
+        url: portalUrl
+      }).catch(err => console.log("Error sharing:", err));
+    } else {
+      navigator.clipboard.writeText(portalUrl);
+      showAlert("Sharing not supported on this device. Link copied to clipboard!");
+    }
+  });
+
+  // Modal forms
+  document.getElementById("addClassForm").addEventListener("submit", handleAddClass);
+  document.getElementById("studentForm").addEventListener("submit", handleStudentSave);
+  document.getElementById("prevLessonForm").addEventListener("submit", handlePrevLessonSave);
+  document.getElementById("newLessonForm").addEventListener("submit", handleNewLessonSave);
+  document.getElementById("dawrahForm").addEventListener("submit", handleDawrahSave);
+  document.getElementById("extraTrackersForm").addEventListener("submit", handleExtraTrackersSave);
+
+  // Search & Filter listeners
+  document.getElementById("studentSearchInput").addEventListener("input", filterStudents);
+  document.getElementById("studentClassFilter").addEventListener("change", filterStudents);
+  document.getElementById("dailyClassFilter").addEventListener("change", filterDailyEntry);
+
+  // Report filters
+  document.getElementById("generateReportBtn").addEventListener("click", renderPerformanceReport);
+  document.getElementById("printReportBtn").addEventListener("click", () => window.print());
+
+  // Student Photo Upload Trigger
+  const photoInput = document.getElementById("studentPhotoInput");
+  const photoPreview = document.getElementById("studentPhotoPreview");
+  photoInput.addEventListener("change", (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        photoPreview.src = event.target.result;
+      };
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  });
+}
+
+// ==========================================
+// SPA TAB NAVIGATION
+// ==========================================
+async function switchTab(tabId) {
+  currentTab = tabId;
+  
+  // Update nav UI highlight
+  document.querySelectorAll(".bottom-nav-item").forEach(item => {
+    item.classList.remove("active");
+  });
+  const navItem = document.getElementById(`nav-${tabId}`);
+  if (navItem) navItem.classList.add("active");
+
+  // Switch visible views
+  document.querySelectorAll(".dashboard-view").forEach(view => {
+    view.classList.add("d-none");
+    view.classList.remove("d-block");
+  });
+  const viewEl = document.getElementById(`view-${tabId}`);
+  if (viewEl) {
+    viewEl.classList.remove("d-none");
+    viewEl.classList.add("d-block");
+  }
+
+  // Reload data context on tab switches to verify live syncing
+  if (!currentUser) return;
+  
+  await loadDatabaseData();
+
+  // Load specific tab UI renders
+  if (tabId === "dashboard") {
+    renderDashboardView();
+  } else if (tabId === "classes") {
+    renderClassesView();
+  } else if (tabId === "students") {
+    renderStudentsView();
+  } else if (tabId === "daily") {
+    renderDailyView();
+  } else if (tabId === "reports") {
+    renderReportsConfig();
+  }
+}
+
+// ==========================================
+// VIEW RENDERING: 1. DASHBOARD
+// ==========================================
+function renderDashboardView() {
+  const total = students.length;
+  let present = 0;
+  let absent = 0;
+  let completed = 0;
+
+  students.forEach(student => {
+    const report = todayReports[student.id];
+    if (report) {
+      if (report.attendance === "present") present++;
+      else if (report.attendance === "absent") absent++;
+      else if (report.attendance === "leave") present++; // Present/On leave count
+
+      // A report entry is considered completed if it has either attendance marked as absent,
+      // or lessons filled out (meaning the Usthad graded them for the day).
+      if (report.attendance === "absent" || report.attendance === "leave" || report.newLesson || report.previousLesson || report.dawrah) {
+        completed++;
+      }
+    }
+  });
+
+  const pending = total - completed;
+
+  document.getElementById("statTotalStudents").textContent = total;
+  document.getElementById("statPresentToday").textContent = present;
+  document.getElementById("statAbsentToday").textContent = absent;
+  document.getElementById("statPendingEntries").textContent = pending >= 0 ? pending : 0;
+}
+
+// ==========================================
+// VIEW RENDERING: 2. CLASSES
+// ==========================================
+function renderClassesView() {
+  const container = document.getElementById("classesListContainer");
+  container.innerHTML = "";
+
+  if (classes.length === 0) {
+    container.innerHTML = `
+      <div class="col-12 text-center text-muted py-5">
+        <i class="bi bi-folder-plus fs-1 opacity-25 d-block mb-2"></i>
+        <p class="small">No classes registered. Click **New Class** to create one.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Populate students count, attendance percentage and completion percentage for each class
+  classes.forEach(cls => {
+    const classStudents = students.filter(s => s.classId === cls.id);
+    const totalCount = classStudents.length;
+
+    // Daily metrics
+    let presentCount = 0;
+    let loggedCount = 0;
+    classStudents.forEach(s => {
+      const rep = todayReports[s.id];
+      if (rep) {
+        if (rep.attendance === "present") presentCount++;
+        if (rep.attendance === "absent" || rep.attendance === "leave" || rep.newLesson || rep.previousLesson) loggedCount++;
+      }
+    });
+
+    const attPct = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+    const compPct = totalCount > 0 ? Math.round((loggedCount / totalCount) * 100) : 0;
+
+    const col = document.createElement("div");
+    col.className = "col-12 col-md-6";
+    col.innerHTML = `
+      <div class="glass-card mb-0 position-relative">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+          <div>
+            <h5 class="fw-bold mb-1">${cls.name}</h5>
+            <span class="badge bg-success-subtle text-success small rounded-pill">${totalCount} Students</span>
+          </div>
+          <button class="btn btn-sm btn-outline-danger border-0 p-1" onclick="handleClassDelete('${cls.id}', '${cls.name}')">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+        
+        <div class="row g-2 pt-2 border-top border-light-subtle">
+          <div class="col-6">
+            <span class="small text-muted d-block">Today's Attendance</span>
+            <span class="fw-bold text-success">${attPct}%</span>
+          </div>
+          <div class="col-6 text-end">
+            <span class="small text-muted d-block">Daily Progress Done</span>
+            <span class="fw-bold text-gradient">${compPct}%</span>
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(col);
+  });
+}
+
+async function handleAddClass(e) {
+  e.preventDefault();
+  const nameInput = document.getElementById("newClassName");
+  const name = nameInput.value.trim();
+  if (!name) return;
+
+  try {
+    await addClass(currentUser.madrasaId, name);
+    nameInput.value = "";
+    addClassModalObj.hide();
+    showAlert(`Class "${name}" created successfully.`);
+    await loadDatabaseData();
+    renderClassesView();
+  } catch (error) {
+    showAlert("Error creating class.", "danger");
+  }
+}
+
+window.handleClassDelete = async function(classId, name) {
+  if (!confirm(`Are you sure you want to delete the class "${name}"? All associated student mappings will remain but the class context will be removed.`)) {
+    return;
+  }
+  try {
+    await deleteClass(currentUser.madrasaId, classId);
+    showAlert(`Class "${name}" deleted.`);
+    await loadDatabaseData();
+    renderClassesView();
+  } catch (error) {
+    showAlert("Error deleting class.", "danger");
+  }
+};
+
+// ==========================================
+// VIEW RENDERING: 3. STUDENTS
+// ==========================================
+function renderStudentsView() {
+  // Populate dropdown lists
+  populateClassDropdowns();
+
+  const container = document.getElementById("studentsListContainer");
+  container.innerHTML = "";
+
+  const filtered = getFilteredStudents();
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div class="col-12 text-center text-muted py-5">
+        <i class="bi bi-people fs-1 opacity-25 d-block mb-2"></i>
+        <p class="small">No students found matching current filters.</p>
+      </div>
+    `;
+    return;
+  }
+
+  filtered.forEach(student => {
+    const className = classes.find(c => c.id === student.classId)?.name || "Unassigned";
+    const avatar = student.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}&backgroundColor=10b981`;
+
+    const col = document.createElement("div");
+    col.className = "col-12 col-md-6";
+    col.innerHTML = `
+      <div class="glass-card mb-0">
+        <div class="d-flex align-items-center gap-3">
+          <img src="${avatar}" class="student-avatar" alt="${student.name}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}'">
+          <div class="flex-grow-1 min-w-0">
+            <h5 class="fw-bold mb-0 text-truncate">${student.name}</h5>
+            <div class="student-card-meta">
+              <span>Adm: <strong>${student.admissionNumber}</strong></span> | 
+              <span>Class: <strong class="text-success">${className}</strong></span>
+            </div>
+            <div class="student-card-meta mt-1">
+              <i class="bi bi-telephone text-muted me-1"></i>${student.parentPhone} (${student.parentName})
+            </div>
+          </div>
+          <div class="d-flex flex-column gap-1">
+            <button class="btn btn-sm btn-outline-success border-0" onclick="openEditStudentModal('${student.id}')">
+              <i class="bi bi-pencil-square"></i>
+            </button>
+            <button class="btn btn-sm btn-outline-danger border-0" onclick="handleStudentDelete('${student.id}', '${student.name}')">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Position Tracker Ribbon -->
+        <div class="position-tracker">
+          <div class="position-tracker-item">
+            <span class="text-success">${student.currentJuz || 1}</span>
+            Juz
+          </div>
+          <div class="position-tracker-item">
+            <span class="text-success">${student.currentSurah || 'Al-Baqarah'}</span>
+            Surah
+          </div>
+          <div class="position-tracker-item">
+            <span class="text-success">${student.currentPage || 1}</span>
+            Page
+          </div>
+        </div>
+
+        <!-- Achievements Badges -->
+        <div class="mt-2 text-wrap">
+          ${(student.achievements || []).map(b => {
+            let badgeClass = "badge-excellent";
+            if (b === "Perfect Attendance") badgeClass = "badge-attendance";
+            else if (b === "Continuous Sabak") badgeClass = "badge-streak";
+            else if (b === "Juz Completion") badgeClass = "badge-juz";
+            else if (b === "Monthly Star Student") badgeClass = "badge-star";
+            return `<span class="achievement-badge ${badgeClass}">${b}</span>`;
+          }).join('')}
+        </div>
+      </div>
+    `;
+    container.appendChild(col);
+  });
+}
+
+function getFilteredStudents() {
+  const searchQuery = document.getElementById("studentSearchInput").value.toLowerCase().trim();
+  const classFilter = document.getElementById("studentClassFilter").value;
+
+  return students.filter(student => {
+    const matchesSearch = student.name.toLowerCase().includes(searchQuery) || student.admissionNumber.includes(searchQuery);
+    const matchesClass = classFilter === "all" || student.classId === classFilter;
+    return matchesSearch && matchesClass;
+  });
+}
+
+function filterStudents() {
+  renderStudentsView();
+}
+
+function populateClassDropdowns() {
+  const filter1 = document.getElementById("studentClassFilter");
+  const filter2 = document.getElementById("dailyClassFilter");
+  const filter3 = document.getElementById("reportClassFilter");
+  const studentFormSelect = document.getElementById("studentClassSelect");
+
+  const activeFilter1 = filter1.value;
+  const activeFilter2 = filter2.value;
+  const activeFilter3 = filter3.value;
+  const activeStudentFormSelect = studentFormSelect.value;
+
+  // Clear existing items but retain defaults
+  filter1.innerHTML = `<option value="all">All Classes</option>`;
+  filter2.innerHTML = `<option value="all">All Students</option>`;
+  filter3.innerHTML = `<option value="all">All Classes</option>`;
+  studentFormSelect.innerHTML = `<option value="">Select Class...</option>`;
+
+  classes.forEach(c => {
+    filter1.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+    filter2.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+    filter3.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+    studentFormSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+  });
+
+  // Restore selections
+  filter1.value = activeFilter1 || "all";
+  filter2.value = activeFilter2 || "all";
+  filter3.value = activeFilter3 || "all";
+  studentFormSelect.value = activeStudentFormSelect;
+}
+
+// Student form trigger configurations
+window.openEditStudentModal = function(studentId) {
+  const s = students.find(x => x.id === studentId);
+  if (!s) return;
+
+  document.getElementById("studentModalTitle").innerHTML = `<i class="bi bi-pencil-square me-2"></i>Edit Student Details`;
+  document.getElementById("studentEditId").value = s.id;
+  document.getElementById("studentName").value = s.name;
+  document.getElementById("studentAdmNumber").value = s.admissionNumber;
+  document.getElementById("studentClassSelect").value = s.classId;
+  document.getElementById("studentParentName").value = s.parentName;
+  document.getElementById("studentParentPhone").value = s.parentPhone;
+  document.getElementById("studentJoiningDate").value = s.joiningDate;
+  document.getElementById("studentJuz").value = s.currentJuz || 1;
+  document.getElementById("studentSurah").value = s.currentSurah || "Al-Baqarah";
+  document.getElementById("studentPage").value = s.currentPage || 1;
+  
+  const avatar = s.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(s.name)}&backgroundColor=10b981`;
+  document.getElementById("studentPhotoPreview").src = avatar;
+
+  addStudentModalObj.show();
+};
+
+// Reset form on clicking add
+document.getElementById("addStudentModal").addEventListener("show.bs.modal", (e) => {
+  const button = e.relatedTarget;
+  if (button) {
+    document.getElementById("studentModalTitle").innerHTML = `<i class="bi bi-person-plus-fill me-2"></i>Add New Student`;
+    document.getElementById("studentEditId").value = "";
+    document.getElementById("studentForm").reset();
+    document.getElementById("studentPhotoPreview").src = "https://images.unsplash.com/photo-1544717305-2782549b5136?w=150";
+    document.getElementById("studentJoiningDate").value = getTodayDateString();
+  }
+});
+
+async function handleStudentSave(e) {
+  e.preventDefault();
+  
+  const studentId = document.getElementById("studentEditId").value;
+  const name = document.getElementById("studentName").value.trim();
+  const admNum = document.getElementById("studentAdmNumber").value.trim();
+  const classId = document.getElementById("studentClassSelect").value;
+  const parentName = document.getElementById("studentParentName").value.trim();
+  const parentPhone = document.getElementById("studentParentPhone").value.trim();
+  const joiningDate = document.getElementById("studentJoiningDate").value;
+  const juz = parseInt(document.getElementById("studentJuz").value) || 1;
+  const surah = document.getElementById("studentSurah").value.trim();
+  const page = parseInt(document.getElementById("studentPage").value) || 1;
+
+  const studentData = {
+    name,
+    admissionNumber: admNum,
+    classId,
+    parentName,
+    parentPhone,
+    joiningDate,
+    currentJuz: juz,
+    currentSurah: surah,
+    currentPage: page
+  };
+
+  const submitBtn = document.getElementById("studentSubmitBtn");
+  submitBtn.disabled = true;
+
+  try {
+    let savedStudent = null;
+    const madrasaId = currentUser.madrasaId;
+
+    if (studentId) {
+      // Edit mode
+      await updateStudent(madrasaId, studentId, studentData);
+      savedStudent = { id: studentId, ...studentData };
+      showAlert(`Student details for "${name}" updated.`);
+    } else {
+      // Add mode
+      savedStudent = await addStudent(madrasaId, studentData);
+      showAlert(`Student "${name}" added successfully.`);
+    }
+
+    // Photo uploading if selected
+    const photoInput = document.getElementById("studentPhotoInput");
+    if (photoInput.files && photoInput.files[0]) {
+      showAlert("Uploading student photo...", "info");
+      await uploadStudentPhoto(madrasaId, savedStudent.id, photoInput.files[0]);
+      showAlert("Student photo updated successfully!");
+    }
+
+    addStudentModalObj.hide();
+    await loadDatabaseData();
+    renderStudentsView();
+  } catch (error) {
+    console.error(error);
+    showAlert("Error saving student data.", "danger");
+  } finally {
+    submitBtn.disabled = false;
+  }
+}
+
+window.handleStudentDelete = async function(studentId, name) {
+  if (!confirm(`Are you sure you want to remove student "${name}"? This action deletes their records permanently.`)) {
+    return;
+  }
+  try {
+    await deleteStudent(currentUser.madrasaId, studentId);
+    showAlert(`Student "${name}" deleted.`);
+    await loadDatabaseData();
+    renderStudentsView();
+  } catch (error) {
+    showAlert("Error deleting student.", "danger");
+  }
+};
+
+// ==========================================
+// VIEW RENDERING: 4. DAILY ENTRY
+// ==========================================
+function renderDailyView() {
+  populateClassDropdowns();
+  
+  const container = document.getElementById("dailyEntryContainer");
+  container.innerHTML = "";
+
+  const filterClass = document.getElementById("dailyClassFilter").value;
+  const filtered = filterClass === "all" ? students : students.filter(s => s.classId === filterClass);
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div class="text-center text-muted py-5">
+        <i class="bi bi-pencil-square fs-1 opacity-25 d-block mb-2"></i>
+        <p class="small">No students enrolled in this class segment.</p>
+      </div>
+    `;
+    return;
+  }
+
+  filtered.forEach(student => {
+    const report = todayReports[student.id] || { attendance: "" };
+    const avatar = student.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}&backgroundColor=10b981`;
+    const className = classes.find(c => c.id === student.classId)?.name || "Unassigned";
+
+    const card = document.createElement("div");
+    card.className = "glass-card mb-3 p-3";
+    card.innerHTML = `
+      <div class="d-flex align-items-center gap-3 mb-3">
+        <img src="${avatar}" class="student-avatar" style="width: 48px; height: 48px;" alt="${student.name}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}'">
+        <div class="flex-grow-1 min-w-0">
+          <h6 class="fw-bold mb-0 text-truncate">${student.name}</h6>
+          <span class="small text-muted">Adm: ${student.admissionNumber} | ${className}</span>
+        </div>
+      </div>
+
+      <!-- Segmented Attendance Button -->
+      <div class="mb-3">
+        <div class="attendance-segmented">
+          <input type="radio" name="attendance_${student.id}" id="att_present_${student.id}" value="present" ${report.attendance === "present" ? "checked" : ""}>
+          <label class="lbl-present" for="att_present_${student.id}" onclick="saveAttendanceStatus('${student.id}', 'present')">Present</label>
+
+          <input type="radio" name="attendance_${student.id}" id="att_leave_${student.id}" value="leave" ${report.attendance === "leave" ? "checked" : ""}>
+          <label class="lbl-leave" for="att_leave_${student.id}" onclick="saveAttendanceStatus('${student.id}', 'leave')">Leave</label>
+
+          <input type="radio" name="attendance_${student.id}" id="att_absent_${student.id}" value="absent" ${report.attendance === "absent" ? "checked" : ""}>
+          <label class="lbl-absent" for="att_absent_${student.id}" onclick="saveAttendanceStatus('${student.id}', 'absent')">Absent</label>
+        </div>
+      </div>
+
+      <!-- Quick Progress Ribbon Tracker -->
+      <div class="position-tracker py-1 px-2 my-2 justify-content-start gap-3" style="font-size: 11px;">
+        <div>Juz: <strong class="text-success">${student.currentJuz || 1}</strong></div>
+        <div>Surah: <strong class="text-success">${student.currentSurah || 'Al-Baqarah'}</strong></div>
+        <div>Page: <strong class="text-success">${student.currentPage || 1}</strong></div>
+      </div>
+
+      <!-- Actions Buttons -->
+      <div class="d-flex flex-wrap gap-2 pt-2 border-top border-light-subtle">
+        <button class="btn btn-sm btn-outline-success flex-grow-1" style="font-size: 11px;" onclick="openPrevLessonModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
+          <i class="bi bi-clock-history me-1"></i>Sabqi (Prev)
+        </button>
+        <button class="btn btn-sm btn-primary-premium flex-grow-1 px-1 py-1" style="font-size: 11px;" onclick="openNewLessonModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
+          <i class="bi bi-journal-plus me-1"></i>Sabak (New)
+        </button>
+        <button class="btn btn-sm btn-outline-warning flex-grow-1" style="font-size: 11px;" onclick="openDawrahModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
+          <i class="bi bi-bookmark-star me-1"></i>Dawrah (Juz)
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="openExtraTrackersModal('${student.id}')" title="Salah tracker, behaviors & achievements">
+          <i class="bi bi-award"></i>
+        </button>
+      </div>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function filterDailyEntry() {
+  renderDailyView();
+}
+
+window.saveAttendanceStatus = async function(studentId, status) {
+  const madrasaId = currentUser.madrasaId;
+  const dateStr = getTodayDateString();
+  const existingReport = todayReports[studentId] || { date: dateStr };
+  
+  const updatedReport = {
+    ...existingReport,
+    date: dateStr,
+    attendance: status
+  };
+
+  try {
+    await saveDailyReport(madrasaId, studentId, updatedReport);
+    todayReports[studentId] = updatedReport;
+    showAlert("Attendance updated.");
+    
+    // Disable or enable modal entry buttons on daily cards by refreshing view
+    setTimeout(() => renderDailyView(), 500);
+  } catch (error) {
+    showAlert("Error logging attendance.", "danger");
+  }
+};
+
+// PREVIOUS LESSON MODAL COORDINATION
+window.openPrevLessonModal = function(studentId) {
+  const report = todayReports[studentId] || {};
+  document.getElementById("prevLessonStudentId").value = studentId;
+  
+  if (report.previousLesson) {
+    document.getElementById("prevSurah").value = report.previousLesson.surah || "";
+    document.getElementById("prevFromAyah").value = report.previousLesson.fromAyah || "";
+    document.getElementById("prevToAyah").value = report.previousLesson.toAyah || "";
+    
+    const grade = report.previousLesson.grade;
+    if (grade) {
+      document.querySelector(`input[name="prevGrade"][value="${grade}"]`).checked = true;
+    }
+    document.getElementById("prevRemarks").value = report.previousLesson.remarks || "";
+  } else {
+    // Fill with current positioning to help the Usthad
+    const student = students.find(s => s.id === studentId);
+    document.getElementById("prevSurah").value = student?.currentSurah || "";
+    document.getElementById("prevFromAyah").value = "";
+    document.getElementById("prevToAyah").value = "";
+    document.getElementById("prevRemarks").value = "";
+    document.getElementById("prevGradeEx").checked = true;
+  }
+  
+  prevLessonModalObj.show();
+};
+
+async function handlePrevLessonSave(e) {
+  e.preventDefault();
+  const studentId = document.getElementById("prevLessonStudentId").value;
+  const surah = document.getElementById("prevSurah").value.trim();
+  const fromAyah = parseInt(document.getElementById("prevFromAyah").value);
+  const toAyah = parseInt(document.getElementById("prevToAyah").value);
+  const grade = document.querySelector('input[name="prevGrade"]:checked').value;
+  const remarks = document.getElementById("prevRemarks").value.trim();
+
+  const prevLesson = { surah, fromAyah, toAyah, grade, remarks };
+  const dateStr = getTodayDateString();
+  const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+
+  try {
+    const updatedReport = { ...report, date: dateStr, previousLesson };
+    await saveDailyReport(currentUser.madrasaId, studentId, updatedReport);
+    todayReports[studentId] = updatedReport;
+    prevLessonModalObj.hide();
+    renderDailyView();
+    showAlert("Sabqi (Previous Lesson) logged successfully.");
+  } catch (e) {
+    showAlert("Error saving lesson details.", "danger");
+  }
+}
+
+// NEW LESSON MODAL COORDINATION
+window.openNewLessonModal = function(studentId) {
+  const report = todayReports[studentId] || {};
+  document.getElementById("newLessonStudentId").value = studentId;
+  const student = students.find(s => s.id === studentId);
+  
+  if (report.newLesson) {
+    document.getElementById("newSurah").value = report.newLesson.surah || "";
+    document.getElementById("newFromAyah").value = report.newLesson.fromAyah || "";
+    document.getElementById("newToAyah").value = report.newLesson.toAyah || "";
+    document.getElementById("newPageNumber").value = report.newLesson.pageNumber || "";
+    
+    const grade = report.newLesson.grade;
+    if (grade) {
+      document.querySelector(`input[name="newGrade"][value="${grade}"]`).checked = true;
+    }
+    document.getElementById("newRemarks").value = report.newLesson.remarks || "";
+  } else {
+    // Prefill helper
+    document.getElementById("newSurah").value = student?.currentSurah || "";
+    document.getElementById("newFromAyah").value = "";
+    document.getElementById("newToAyah").value = "";
+    document.getElementById("newPageNumber").value = student?.currentPage || "";
+    document.getElementById("newRemarks").value = "";
+    document.getElementById("newGradeEx").checked = true;
+  }
+  
+  newLessonModalObj.show();
+};
+
+async function handleNewLessonSave(e) {
+  e.preventDefault();
+  const studentId = document.getElementById("newLessonStudentId").value;
+  const surah = document.getElementById("newSurah").value.trim();
+  const fromAyah = parseInt(document.getElementById("newFromAyah").value);
+  const toAyah = parseInt(document.getElementById("newToAyah").value);
+  const pageNumber = parseInt(document.getElementById("newPageNumber").value);
+  const grade = document.querySelector('input[name="newGrade"]:checked').value;
+  const remarks = document.getElementById("newRemarks").value.trim();
+
+  const newLesson = { surah, fromAyah, toAyah, pageNumber, grade, remarks };
+  const dateStr = getTodayDateString();
+  const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+
+  try {
+    const updatedReport = { ...report, date: dateStr, newLesson };
+    await saveDailyReport(currentUser.madrasaId, studentId, updatedReport);
+    todayReports[studentId] = updatedReport;
+    
+    // Auto-update local students cache positioning for visual consistency
+    const studentIdx = students.findIndex(s => s.id === studentId);
+    if (studentIdx !== -1) {
+      students[studentIdx].currentPage = pageNumber;
+      students[studentIdx].currentSurah = surah;
+    }
+
+    newLessonModalObj.hide();
+    renderDailyView(); // Reload UI to update the position strip
+    showAlert("Sabak (New Lesson) logged and position updated.");
+  } catch (e) {
+    showAlert("Error saving lesson details.", "danger");
+  }
+}
+
+// DAWRAH MODAL COORDINATION
+window.openDawrahModal = function(studentId) {
+  const report = todayReports[studentId] || {};
+  document.getElementById("dawrahStudentId").value = studentId;
+  const student = students.find(s => s.id === studentId);
+
+  if (report.dawrah) {
+    document.getElementById("dawrahJuz").value = report.dawrah.juzNumber || "";
+    document.getElementById("dawrahSurah").value = report.dawrah.surah || "";
+    document.getElementById("dawrahFromAyah").value = report.dawrah.fromAyah || "";
+    document.getElementById("dawrahToAyah").value = report.dawrah.toAyah || "";
+    
+    const grade = report.dawrah.grade;
+    if (grade) {
+      document.querySelector(`input[name="dawrahGrade"][value="${grade}"]`).checked = true;
+    }
+    document.getElementById("dawrahRemarks").value = report.dawrah.remarks || "";
+  } else {
+    // Prefill with current student Juz
+    document.getElementById("dawrahJuz").value = student?.currentJuz || 1;
+    document.getElementById("dawrahSurah").value = "";
+    document.getElementById("dawrahFromAyah").value = "";
+    document.getElementById("dawrahToAyah").value = "";
+    document.getElementById("dawrahRemarks").value = "";
+    document.getElementById("dawrahGradeEx").checked = true;
+  }
+
+  dawrahModalObj.show();
+};
+
+async function handleDawrahSave(e) {
+  e.preventDefault();
+  const studentId = document.getElementById("dawrahStudentId").value;
+  const juzNumber = parseInt(document.getElementById("dawrahJuz").value);
+  const surah = document.getElementById("dawrahSurah").value.trim();
+  const fromAyah = parseInt(document.getElementById("dawrahFromAyah").value) || null;
+  const toAyah = parseInt(document.getElementById("dawrahToAyah").value) || null;
+  const grade = document.querySelector('input[name="dawrahGrade"]:checked').value;
+  const remarks = document.getElementById("dawrahRemarks").value.trim();
+
+  const dawrah = { juzNumber, surah, fromAyah, toAyah, grade, remarks };
+  const dateStr = getTodayDateString();
+  const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+
+  try {
+    const updatedReport = { ...report, date: dateStr, dawrah };
+    await saveDailyReport(currentUser.madrasaId, studentId, updatedReport);
+    todayReports[studentId] = updatedReport;
+
+    const studentIdx = students.findIndex(s => s.id === studentId);
+    if (studentIdx !== -1) {
+      students[studentIdx].currentJuz = juzNumber;
+    }
+
+    dawrahModalObj.hide();
+    renderDailyView();
+    showAlert("Dawrah log saved.");
+  } catch (e) {
+    showAlert("Error saving dawrah log.", "danger");
+  }
+}
+
+// EXTRA TRACKERS MODAL COORDINATION (Akhlaq, Salah, Badges)
+window.openExtraTrackersModal = function(studentId) {
+  const report = todayReports[studentId] || {};
+  const student = students.find(s => s.id === studentId);
+  document.getElementById("trackersStudentId").value = studentId;
+
+  // Set Akhlaq
+  document.getElementById("trackerAkhlaq").value = report.akhlaq || "Good";
+
+  // Set Salah
+  const salah = report.salah || { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true };
+  document.getElementById("salahFajr").checked = salah.fajr;
+  document.getElementById("salahDhuhr").checked = salah.dhuhr;
+  document.getElementById("salahAsr").checked = salah.asr;
+  document.getElementById("salahMaghrib").checked = salah.maghrib;
+  document.getElementById("salahIsha").checked = salah.isha;
+
+  // Set Badges
+  const activeBadges = student?.achievements || [];
+  document.getElementById("badgeAttendance").checked = activeBadges.includes("Perfect Attendance");
+  document.getElementById("badgeStreak").checked = activeBadges.includes("Continuous Sabak");
+  document.getElementById("badgeJuz").checked = activeBadges.includes("Juz Completion");
+  document.getElementById("badgeStar").checked = activeBadges.includes("Monthly Star Student");
+  document.getElementById("badgeExcellent").checked = activeBadges.includes("Excellent Performance");
+
+  extraTrackersModalObj.show();
+};
+
+async function handleExtraTrackersSave(e) {
+  e.preventDefault();
+  const studentId = document.getElementById("trackersStudentId").value;
+  const akhlaq = document.getElementById("trackerAkhlaq").value;
+  
+  const salah = {
+    fajr: document.getElementById("salahFajr").checked,
+    dhuhr: document.getElementById("salahDhuhr").checked,
+    asr: document.getElementById("salahAsr").checked,
+    maghrib: document.getElementById("salahMaghrib").checked,
+    isha: document.getElementById("salahIsha").checked
+  };
+
+  // Collect checked badges
+  const achievements = [];
+  if (document.getElementById("badgeAttendance").checked) achievements.push("Perfect Attendance");
+  if (document.getElementById("badgeStreak").checked) achievements.push("Continuous Sabak");
+  if (document.getElementById("badgeJuz").checked) achievements.push("Juz Completion");
+  if (document.getElementById("badgeStar").checked) achievements.push("Monthly Star Student");
+  if (document.getElementById("badgeExcellent").checked) achievements.push("Excellent Performance");
+
+  const dateStr = getTodayDateString();
+  const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+
+  try {
+    const madrasaId = currentUser.madrasaId;
+    
+    // 1. Update report document
+    const updatedReport = { ...report, date: dateStr, akhlaq, salah };
+    await saveDailyReport(madrasaId, studentId, updatedReport);
+    todayReports[studentId] = updatedReport;
+
+    // 2. Update achievements on the student document
+    await updateStudent(madrasaId, studentId, { achievements });
+    
+    // Sync local cache
+    const sIdx = students.findIndex(s => s.id === studentId);
+    if (sIdx !== -1) {
+      students[sIdx].achievements = achievements;
+    }
+
+    extraTrackersModalObj.hide();
+    renderDailyView();
+    showAlert("Trackers and badges updated successfully.");
+  } catch (err) {
+    showAlert("Error saving extra trackers.", "danger");
+  }
+}
+
+// ==========================================
+// VIEW RENDERING: 5. REPORTS
+// ==========================================
+function renderReportsConfig() {
+  populateClassDropdowns();
+  
+  const studentSelect = document.getElementById("reportStudentSelect");
+  studentSelect.innerHTML = `<option value="">Choose Student...</option>`;
+  
+  students.forEach(s => {
+    studentSelect.innerHTML += `<option value="${s.id}">${s.name} (Adm: ${s.admissionNumber})</option>`;
+  });
+
+  document.getElementById("printReportBtn").disabled = true;
+  document.getElementById("reportOutputArea").innerHTML = `
+    <div class="text-center text-muted py-5" id="reportPlaceholder">
+      <i class="bi bi-file-earmark-bar-graph fs-1 text-success opacity-25 d-block mb-3"></i>
+      <p class="mb-0 small">Configure inputs above and click **Generate** to load reports.</p>
+    </div>
+  `;
+}
+
+async function renderPerformanceReport() {
+  const studentId = document.getElementById("reportStudentSelect").value;
+  const reportType = document.getElementById("reportTypeSelect").value;
+  const classFilter = document.getElementById("reportClassFilter").value;
+  const outputArea = document.getElementById("reportOutputArea");
+  
+  if (!studentId) {
+    showAlert("Please select a student first.", "warning");
+    return;
+  }
+
+  const student = students.find(s => s.id === studentId);
+  const className = classes.find(c => c.id === student.classId)?.name || "Unassigned";
+
+  outputArea.innerHTML = `
+    <div class="text-center py-5">
+      <div class="spinner-border text-success" role="status"></div>
+      <p class="small text-muted mt-2">Compiling records...</p>
+    </div>
+  `;
+
+  try {
+    const logs = await getStudentReports(currentUser.madrasaId, studentId);
+    
+    // Filter limits based on type
+    let filteredLogs = [...logs];
+    if (reportType === "weekly") {
+      filteredLogs = logs.slice(0, 15);
+    } else if (reportType === "monthly") {
+      filteredLogs = logs.slice(0, 30);
+    }
+
+    if (filteredLogs.length === 0) {
+      outputArea.innerHTML = `
+        <div class="text-center py-5">
+          <i class="bi bi-clipboard-x fs-1 text-danger opacity-50 d-block mb-2"></i>
+          <p class="fw-bold mb-1">No Entries Found</p>
+          <span class="small text-muted">There are no progress logs recorded yet for ${student.name}.</span>
+        </div>
+      `;
+      document.getElementById("printReportBtn").disabled = true;
+      return;
+    }
+
+    // Build Printable HTML layout
+    let rowsHtml = "";
+    filteredLogs.forEach(log => {
+      const attBadge = log.attendance === "present" ? '<span class="badge bg-success">Present</span>' :
+                       log.attendance === "leave" ? '<span class="badge bg-warning text-dark">Leave</span>' :
+                       '<span class="badge bg-danger">Absent</span>';
+
+      const prevText = log.previousLesson ? `${log.previousLesson.surah} (${log.previousLesson.fromAyah}-${log.previousLesson.toAyah}) - <span class="grade-pill grade-${log.previousLesson.grade.toLowerCase()}">${log.previousLesson.grade}</span>` : '—';
+      const newText = log.newLesson ? `${log.newLesson.surah} (${log.newLesson.fromAyah}-${log.newLesson.toAyah}), Pg: ${log.newLesson.pageNumber} - <span class="grade-pill grade-${log.newLesson.grade.toLowerCase()}">${log.newLesson.grade}</span>` : '—';
+      const dawrahText = log.dawrah ? `Juz ${log.dawrah.juzNumber} (${log.dawrah.surah || 'All'} ${log.dawrah.fromAyah || ''}-${log.dawrah.toAyah || ''}) - <span class="grade-pill grade-${log.dawrah.grade.toLowerCase()}">${log.dawrah.grade}</span>` : '—';
+
+      rowsHtml += `
+        <tr>
+          <td class="small fw-semibold text-nowrap">${log.date}</td>
+          <td>${attBadge}</td>
+          <td class="small">${prevText}</td>
+          <td class="small">${newText}</td>
+          <td class="small">${dawrahText}</td>
+          <td class="small text-muted">${log.newLesson?.remarks || log.previousLesson?.remarks || log.dawrah?.remarks || '—'}</td>
+        </tr>
+      `;
+    });
+
+    const isLiveSymbol = isOfflineMode ? '<span class="badge bg-warning text-dark float-end">Offline Demo Database</span>' : '';
+
+    outputArea.innerHTML = `
+      <div class="report-header pb-3 mb-3 border-bottom d-flex justify-content-between align-items-start">
+        <div>
+          <h4 class="fw-bold mb-0 text-success">${currentMadrasa.name}</h4>
+          <span class="small text-muted">Location: ${currentMadrasa.location} | Head: ${currentMadrasa.usthadName}</span>
+        </div>
+        <div class="text-end">
+          <h5 class="fw-bold mb-0">HIFZ PROGRESS REPORT</h5>
+          <span class="small text-muted">Generated on: ${new Date().toLocaleDateString()}</span>
+          ${isLiveSymbol}
+        </div>
+      </div>
+
+      <div class="row g-2 mb-4">
+        <div class="col-6 col-md-3">
+          <span class="small text-muted d-block">Student Name</span>
+          <strong class="text-success">${student.name}</strong>
+        </div>
+        <div class="col-6 col-md-3">
+          <span class="small text-muted d-block">Admission No</span>
+          <strong>${student.admissionNumber}</strong>
+        </div>
+        <div class="col-6 col-md-3">
+          <span class="small text-muted d-block">Class Section</span>
+          <strong>${className}</strong>
+        </div>
+        <div class="col-6 col-md-3">
+          <span class="small text-muted d-block">Current Tracker Position</span>
+          <span class="badge bg-success">Juz ${student.currentJuz || 1}</span>
+          <span class="badge bg-info">Surah ${student.currentSurah || 'Al-Baqarah'}</span>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-bordered table-striped table-hover align-middle mb-0" style="font-size: 13px;">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Attendance</th>
+              <th>Previous Lesson (Sabqi)</th>
+              <th>New Lesson (Sabak)</th>
+              <th>Dawrah / Revision</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="report-footer mt-4 pt-3 border-top d-none d-print-flex justify-content-between text-muted" style="font-size: 11px;">
+        <span>Powered by Hifz Progress Portal</span>
+        <span>Signature of Usthad: _________________________</span>
+        <span>Parent Signature: _________________________</span>
+      </div>
+    `;
+
+    document.getElementById("printReportBtn").disabled = false;
+  } catch (error) {
+    console.error(error);
+    outputArea.innerHTML = `<div class="text-center py-5 text-danger">Failed to gather logs. Check connection.</div>`;
+    document.getElementById("printReportBtn").disabled = true;
+  }
+}

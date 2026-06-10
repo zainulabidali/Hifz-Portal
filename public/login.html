@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Hifz Progress Portal</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    body {
+      padding-bottom: 0;
+      display: flex;
+      align-items: center;
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container d-flex flex-column justify-content-center">
+    <div class="glass-card slide-in p-4">
+      <div class="text-center mb-4">
+        <div class="d-inline-flex align-items-center justify-content-center bg-success-subtle text-success rounded-circle p-3 mb-2" style="width: 64px; height: 64px;">
+          <i class="bi bi-book-half fs-2"></i>
+        </div>
+        <h2 class="fw-bold mb-1">Welcome Back</h2>
+        <p class="text-muted small">Log in to manage your Madrasa progress</p>
+      </div>
+
+      <div id="errorAlert" class="alert alert-danger d-none" role="alert"></div>
+
+      <form id="loginForm">
+        <div class="mb-3">
+          <label for="emailInput" class="form-label small fw-semibold text-secondary">Email Address</label>
+          <div class="input-group">
+            <span class="input-group-text bg-transparent border-end-0 text-muted"><i class="bi bi-envelope"></i></span>
+            <input type="email" class="form-control border-start-0 ps-0" id="emailInput" placeholder="name@madrasa.com" required>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <label for="passwordInput" class="form-label small fw-semibold text-secondary mb-0">Password</label>
+          </div>
+          <div class="input-group">
+            <span class="input-group-text bg-transparent border-end-0 text-muted"><i class="bi bi-lock"></i></span>
+            <input type="password" class="form-control border-start-0 border-end-0 ps-0" id="passwordInput" placeholder="••••••••" required>
+            <button class="btn btn-outline-secondary border-start-0 text-muted bg-transparent" type="button" id="togglePassword">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary-premium w-100 mb-3" id="loginButton">
+          <span class="spinner-border spinner-border-sm d-none me-2" role="status" aria-hidden="true"></span>
+          Log In
+        </button>
+      </form>
+
+      <div class="text-center mt-3">
+        <p class="small text-muted mb-2">Don't have a Madrasa account? <a href="signup.html" class="text-success fw-semibold text-decoration-none">Register here</a></p>
+        <p class="small text-muted mb-0">Looking for student tracking? <a href="parent-portal.html" class="text-success fw-semibold text-decoration-none"><i class="bi bi-search me-1"></i>Parent Search Portal</a></p>
+      </div>
+    </div>
+
+    <!-- Mode Badge / Developer Helper -->
+    <div class="glass-card py-2 px-3 text-center mx-auto" style="max-width: 380px; font-size: 12px; opacity: 0.95;">
+      <div class="d-flex align-items-center justify-content-between">
+        <div>
+          <i class="bi bi-cpu text-success me-1"></i>
+          <span id="modeStatusText" class="fw-semibold">Offline Demo Mode</span>
+        </div>
+        <button id="toggleModeBtn" class="btn btn-sm btn-outline-success px-2 py-0" style="font-size: 10px;">Switch</button>
+      </div>
+      <div id="demoCredentials" class="text-muted text-start mt-2 border-top pt-2">
+        <strong>Demo Accounts (Auto-Seeded):</strong>
+        <div class="d-flex justify-content-between mt-1">
+          <span>Usthad Login: <code>usthad@madrasa.com</code></span>
+          <span>(pw: anything)</span>
+        </div>
+        <div class="d-flex justify-content-between">
+          <span>Super Admin: <code>admin@hifzportal.com</code></span>
+          <span>(pw: anything)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Module Core scripts -->
+  <script type="module">
+    import { loginUser } from "./src/auth.js";
+    import { isOfflineMode } from "./firebase-config.js";
+
+    // Toggle Password Visibility
+    const togglePassword = document.querySelector("#togglePassword");
+    const passwordInput = document.querySelector("#passwordInput");
+    togglePassword.addEventListener("click", () => {
+      const type = passwordInput.getAttribute("type") === "password" ? "text" : "password";
+      passwordInput.setAttribute("type", type);
+      togglePassword.querySelector("i").classList.toggle("bi-eye");
+      togglePassword.querySelector("i").classList.toggle("bi-eye-slash");
+    });
+
+    // Handle Form Submit
+    const loginForm = document.querySelector("#loginForm");
+    const loginButton = document.querySelector("#loginButton");
+    const errorAlert = document.querySelector("#errorAlert");
+
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errorAlert.classList.add("d-none");
+      loginButton.disabled = true;
+      loginButton.querySelector(".spinner-border").classList.remove("d-none");
+
+      const email = document.querySelector("#emailInput").value.trim();
+      const password = document.querySelector("#passwordInput").value;
+
+      try {
+        const user = await loginUser(email, password);
+        // Successful login, route via index.html/checking rules
+        window.location.href = "index.html";
+      } catch (error) {
+        console.error("Login Error:", error);
+        errorAlert.textContent = error.message || "Invalid email or password.";
+        errorAlert.classList.remove("d-none");
+        loginButton.disabled = false;
+        loginButton.querySelector(".spinner-border").classList.add("d-none");
+      }
+    });
+
+    // Handle Offline/Online switcher for quick developer testing
+    const modeStatusText = document.querySelector("#modeStatusText");
+    const toggleModeBtn = document.querySelector("#toggleModeBtn");
+    const demoCredentials = document.querySelector("#demoCredentials");
+
+    const refreshModeUI = () => {
+      const forceOffline = localStorage.getItem("force_offline");
+      
+      // Determine what state we are in
+      if (isOfflineMode || forceOffline === "true") {
+        modeStatusText.innerHTML = `<span class="badge bg-warning text-dark me-1">Offline</span> Simulated Database`;
+        demoCredentials.classList.remove("d-none");
+      } else {
+        modeStatusText.innerHTML = `<span class="badge bg-success me-1">Live</span> Firebase Auth/Firestore`;
+        demoCredentials.classList.add("d-none");
+      }
+    };
+
+    toggleModeBtn.addEventListener("click", () => {
+      const forceOffline = localStorage.getItem("force_offline");
+      if (forceOffline === "true") {
+        localStorage.removeItem("force_offline");
+      } else {
+        localStorage.setItem("force_offline", "true");
+      }
+      // Reload page to re-initialize firebase config
+      window.location.reload();
+    });
+
+    refreshModeUI();
+  </script>
+</body>
+</html>

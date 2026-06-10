@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard - Hifz Progress Portal</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* Additional dashboard specific styling */
+    .top-header {
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .dark-mode .top-header {
+      background: rgba(15, 23, 42, 0.8);
+      border-color: rgba(255, 255, 255, 0.08);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Header -->
+  <header class="top-header no-print py-3 px-4 d-flex justify-content-between align-items-center">
+    <div>
+      <h5 class="fw-bold mb-0 text-success"><i class="bi bi-book-half me-2"></i>Hifz Portal</h5>
+      <span id="headerMadrasaName" class="small text-muted">Loading Madrasa...</span>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span id="activeBadge" class="badge bg-success-subtle text-success border border-success-subtle px-2 py-1 rounded-pill">Active</span>
+      <button id="logoutBtn" class="btn btn-sm btn-outline-danger border-0 rounded-circle" title="Sign Out">
+        <i class="bi bi-box-arrow-right fs-5"></i>
+      </button>
+    </div>
+  </header>
+
+  <main class="app-container slide-in">
+    <!-- View Notifications Container -->
+    <div id="alertContainer" class="position-fixed top-0 start-50 translate-middle-x mt-3 no-print" style="z-index: 1050; width: 90%; max-width: 480px;"></div>
+
+    <!-- ==========================================
+         VIEW 1: DASHBOARD
+         ========================================== -->
+    <section id="view-dashboard" class="dashboard-view d-block">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h3 class="fw-bold mb-0">Assalamu Alaikum,</h3>
+          <p id="dashboardUsthadName" class="text-muted small">Usthad</p>
+        </div>
+        <div class="text-end">
+          <span class="badge bg-light text-secondary border p-2 small text-dark" id="todayDateStr">June 10, 2026</span>
+        </div>
+      </div>
+
+      <!-- Stats Grid -->
+      <div class="row g-3 mb-4">
+        <div class="col-6">
+          <div class="glass-card text-center p-3 mb-0">
+            <h4 class="fw-bold text-success mb-1" id="statTotalStudents">0</h4>
+            <span class="text-muted small">Total Students</span>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="glass-card text-center p-3 mb-0">
+            <h4 class="fw-bold text-info mb-1" id="statPresentToday">0</h4>
+            <span class="text-muted small">Present Today</span>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="glass-card text-center p-3 mb-0">
+            <h4 class="fw-bold text-danger mb-1" id="statAbsentToday">0</h4>
+            <span class="text-muted small">Absent Today</span>
+          </div>
+        </div>
+        <div class="col-6">
+          <div class="glass-card text-center p-3 mb-0">
+            <h4 class="fw-bold text-warning mb-1" id="statPendingEntries">0</h4>
+            <span class="text-muted small">Pending Entries</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <h5 class="fw-bold mb-3">Quick Actions</h5>
+      <div class="row g-3">
+        <div class="col-4">
+          <div class="glass-card quick-action-card p-3 mb-0" onclick="switchTab('daily')">
+            <i class="bi bi-calendar-check-fill d-block mb-2 text-success"></i>
+            <span class="small fw-semibold">Daily Entry</span>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="glass-card quick-action-card p-3 mb-0" onclick="switchTab('students')">
+            <i class="bi bi-people-fill d-block mb-2 text-primary"></i>
+            <span class="small fw-semibold">Students</span>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="glass-card quick-action-card p-3 mb-0" onclick="switchTab('reports')">
+            <i class="bi bi-file-earmark-bar-graph-fill d-block mb-2 text-warning"></i>
+            <span class="small fw-semibold">Reports</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Parent Portal Card -->
+      <div class="glass-card mt-4 p-3 mb-4">
+        <h5 class="fw-bold mb-2"><i class="bi bi-person-heart text-success me-2"></i>Parent Progress Portal</h5>
+        <p class="text-muted small">Share your Madrasa's specific parent access link so parents can track progress, view ranking, charts, and history.</p>
+        <div class="d-flex gap-2 mt-3">
+          <button id="openParentPortalBtn" class="btn btn-sm btn-primary-premium flex-grow-1"><i class="bi bi-box-arrow-up-right me-1"></i>Open Portal</button>
+          <button id="copyParentPortalBtn" class="btn btn-sm btn-secondary-premium flex-grow-1"><i class="bi bi-clipboard me-1"></i>Copy Link</button>
+          <button id="shareParentPortalBtn" class="btn btn-sm btn-secondary-premium flex-grow-1"><i class="bi bi-share me-1"></i>Share Link</button>
+        </div>
+      </div>
+      
+      <!-- Subscription Alert -->
+      <div id="subscriptionExpiryAlert" class="alert alert-info mt-4 d-none" role="alert">
+        <i class="bi bi-info-circle-fill me-2"></i>
+        Your subscription will expire on <strong id="expiryAlertDate"></strong>.
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VIEW 2: CLASSES
+         ========================================== -->
+    <section id="view-classes" class="dashboard-view d-none">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="fw-bold mb-0">Class Registry</h3>
+        <button class="btn btn-primary-premium btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addClassModal">
+          <i class="bi bi-plus-lg me-1"></i>New Class
+        </button>
+      </div>
+
+      <div id="classesListContainer" class="row g-3">
+        <!-- Rendered dynamically -->
+        <div class="col-12 text-center text-muted py-5">
+          <div class="spinner-border text-success mb-2" role="status"></div>
+          <p>Loading classes...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VIEW 3: STUDENTS
+         ========================================== -->
+    <section id="view-students" class="dashboard-view d-none">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="fw-bold mb-0">Students</h3>
+        <button class="btn btn-primary-premium btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#addStudentModal">
+          <i class="bi bi-plus-lg me-1"></i>New Student
+        </button>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="glass-card p-3 mb-4">
+        <div class="input-group mb-2">
+          <span class="input-group-text bg-transparent border-end-0 text-muted"><i class="bi bi-search"></i></span>
+          <input type="text" id="studentSearchInput" class="form-control border-start-0 ps-0" placeholder="Search by name or adm number...">
+        </div>
+        <select id="studentClassFilter" class="form-select text-muted" style="border-radius: var(--radius-md);">
+          <option value="all">All Classes</option>
+        </select>
+      </div>
+
+      <div id="studentsListContainer" class="row g-3">
+        <!-- Rendered dynamically -->
+        <div class="col-12 text-center text-muted py-5">
+          <div class="spinner-border text-success mb-2" role="status"></div>
+          <p>Loading students...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VIEW 4: DAILY ENTRY
+         ========================================== -->
+    <section id="view-daily" class="dashboard-view d-none">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h3 class="fw-bold mb-0">Daily Entry</h3>
+          <span id="dailyEntryClassTitle" class="text-muted small">Select class to filter</span>
+        </div>
+        <div style="width: 140px;">
+          <select id="dailyClassFilter" class="form-select form-select-sm rounded-pill text-muted">
+            <option value="all">All Students</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="dailyEntryContainer">
+        <!-- Rendered dynamically -->
+        <div class="text-center text-muted py-5">
+          <div class="spinner-border text-success mb-2" role="status"></div>
+          <p>Loading daily tracker...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==========================================
+         VIEW 5: REPORTS
+         ========================================== -->
+    <section id="view-reports" class="dashboard-view d-none">
+      <div class="d-flex justify-content-between align-items-center mb-4 no-print">
+        <h3 class="fw-bold mb-0">Performance Reports</h3>
+      </div>
+
+      <!-- Report Generation Config (No-print) -->
+      <div class="glass-card p-3 mb-4 no-print">
+        <h6 class="fw-bold mb-3"><i class="bi bi-sliders me-2 text-success"></i>Configure Report</h6>
+        <div class="mb-3">
+          <label class="form-label small text-secondary">Student</label>
+          <select id="reportStudentSelect" class="form-select">
+            <option value="">Choose Student...</option>
+          </select>
+        </div>
+        <div class="row g-2 mb-3">
+          <div class="col-6">
+            <label class="form-label small text-secondary">Report Type</label>
+            <select id="reportTypeSelect" class="form-select">
+              <option value="daily">Daily Log</option>
+              <option value="weekly">Weekly Summary (15 logs)</option>
+              <option value="monthly">Monthly Overview (30 logs)</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small text-secondary">Target Class</label>
+            <select id="reportClassFilter" class="form-select">
+              <option value="all">All Classes</option>
+            </select>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button id="generateReportBtn" class="btn btn-primary-premium flex-grow-1"><i class="bi bi-file-earmark-text me-1"></i>Generate</button>
+          <button id="printReportBtn" class="btn btn-secondary-premium" disabled><i class="bi bi-printer me-1"></i>Print / PDF</button>
+        </div>
+      </div>
+
+      <!-- Output Report Render Area -->
+      <div id="reportOutputArea" class="glass-card bg-white text-dark p-4 border-0">
+        <div class="text-center text-muted py-5" id="reportPlaceholder">
+          <i class="bi bi-file-earmark-bar-graph fs-1 text-success opacity-25 d-block mb-3"></i>
+          <p class="mb-0 small">Configure inputs above and click **Generate** to load reports.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ==========================================
+       MODALS: DIALOG SCREENS
+       ========================================== -->
+
+  <!-- Add Class Modal -->
+  <div class="modal fade" id="addClassModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-success"><i class="bi bi-plus-circle-fill me-2"></i>Create New Class</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="addClassForm">
+          <div class="modal-body py-4">
+            <div class="mb-3">
+              <label for="newClassName" class="form-label small fw-semibold text-secondary">Class Name</label>
+              <input type="text" class="form-control" id="newClassName" placeholder="e.g. Class Hifz-A" required>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary-premium btn-sm rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary-premium btn-sm rounded-pill px-4">Create</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add/Edit Student Modal -->
+  <div class="modal fade" id="addStudentModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-success" id="studentModalTitle"><i class="bi bi-person-plus-fill me-2"></i>Add New Student</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="studentForm">
+          <input type="hidden" id="studentEditId">
+          <div class="modal-body py-3" style="max-height: 70vh; overflow-y: auto;">
+            
+            <!-- Photo Upload Box -->
+            <div class="mb-3 text-center">
+              <div class="position-relative d-inline-block">
+                <img id="studentPhotoPreview" src="https://images.unsplash.com/photo-1544717305-2782549b5136?w=150" class="student-avatar" style="width: 80px; height: 80px;" alt="Student Photo">
+                <label for="studentPhotoInput" class="position-absolute bottom-0 end-0 bg-success text-white rounded-circle p-1" style="cursor: pointer; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;">
+                  <i class="bi bi-camera-fill small"></i>
+                </label>
+                <input type="file" id="studentPhotoInput" class="d-none" accept="image/*">
+              </div>
+              <p class="small text-muted mt-1">Upload student picture (Optional)</p>
+            </div>
+
+            <div class="mb-3">
+              <label for="studentName" class="form-label small fw-semibold text-secondary">Student Full Name</label>
+              <input type="text" class="form-control" id="studentName" placeholder="Zaid Yusuf" required>
+            </div>
+
+            <div class="mb-3">
+              <label for="studentAdmNumber" class="form-label small fw-semibold text-secondary">Admission Number</label>
+              <input type="text" class="form-control" id="studentAdmNumber" placeholder="ADM202601" required>
+            </div>
+
+            <div class="mb-3">
+              <label for="studentClassSelect" class="form-label small fw-semibold text-secondary">Assigned Class</label>
+              <select id="studentClassSelect" class="form-select" required>
+                <option value="">Select Class...</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label for="studentParentName" class="form-label small fw-semibold text-secondary">Parent / Guardian Name</label>
+              <input type="text" class="form-control" id="studentParentName" placeholder="Yusuf Khan" required>
+            </div>
+
+            <div class="mb-3">
+              <label for="studentParentPhone" class="form-label small fw-semibold text-secondary">Parent Phone Number</label>
+              <input type="tel" class="form-control" id="studentParentPhone" placeholder="+919876543210" required>
+            </div>
+
+            <div class="mb-3">
+              <label for="studentJoiningDate" class="form-label small fw-semibold text-secondary">Joining Date</label>
+              <input type="date" class="form-control" id="studentJoiningDate" required>
+            </div>
+
+            <hr class="my-3">
+            <h6 class="fw-bold mb-3 text-secondary">Quran Progress (Starting Point)</h6>
+
+            <div class="row g-2">
+              <div class="col-4">
+                <label for="studentJuz" class="form-label small text-secondary">Current Juz</label>
+                <input type="number" class="form-control" id="studentJuz" min="1" max="30" value="1">
+              </div>
+              <div class="col-4">
+                <label for="studentSurah" class="form-label small text-secondary">Current Surah</label>
+                <input type="text" class="form-control" id="studentSurah" placeholder="Al-Baqarah" value="Al-Baqarah">
+              </div>
+              <div class="col-4">
+                <label for="studentPage" class="form-label small text-secondary">Current Page</label>
+                <input type="number" class="form-control" id="studentPage" min="1" max="604" value="1">
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary-premium btn-sm rounded-pill px-3" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary-premium btn-sm rounded-pill px-4" id="studentSubmitBtn">Save Student</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Previous Lesson Modal -->
+  <div class="modal fade" id="prevLessonModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-success"><i class="bi bi-clock-history me-2"></i>Log Previous Lesson (Sabqi)</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="prevLessonForm">
+          <input type="hidden" id="prevLessonStudentId">
+          <div class="modal-body py-4">
+            <div class="row g-2 mb-3">
+              <div class="col-12">
+                <label for="prevSurah" class="form-label small text-secondary">Surah</label>
+                <input type="text" class="form-control" id="prevSurah" placeholder="e.g. Al-Fatihah" required>
+              </div>
+              <div class="col-6">
+                <label for="prevFromAyah" class="form-label small text-secondary">From Ayah</label>
+                <input type="number" class="form-control" id="prevFromAyah" placeholder="1" required min="1">
+              </div>
+              <div class="col-6">
+                <label for="prevToAyah" class="form-label small text-secondary">To Ayah</label>
+                <input type="number" class="form-control" id="prevToAyah" placeholder="7" required min="1">
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label small text-secondary">Grade</label>
+              <div class="d-flex gap-1">
+                <input type="radio" class="btn-check" name="prevGrade" id="prevGradeEx" value="Excellent" checked>
+                <label class="btn btn-sm btn-outline-success flex-grow-1" for="prevGradeEx">Excellent</label>
+
+                <input type="radio" class="btn-check" name="prevGrade" id="prevGradeGd" value="Good">
+                <label class="btn btn-sm btn-outline-primary flex-grow-1" for="prevGradeGd">Good</label>
+
+                <input type="radio" class="btn-check" name="prevGrade" id="prevGradeAv" value="Average">
+                <label class="btn btn-sm btn-outline-warning flex-grow-1" for="prevGradeAv">Average</label>
+
+                <input type="radio" class="btn-check" name="prevGrade" id="prevGradeWk" value="Weak">
+                <label class="btn btn-sm btn-outline-danger flex-grow-1" for="prevGradeWk">Weak</label>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="prevRemarks" class="form-label small text-secondary">Remarks / Feedback</label>
+              <textarea class="form-control" id="prevRemarks" rows="2" placeholder="Fluent memorization..."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary-premium btn-sm rounded-pill" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary-premium btn-sm rounded-pill px-4">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Lesson Modal -->
+  <div class="modal fade" id="newLessonModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-success"><i class="bi bi-journal-plus me-2"></i>Log New Lesson (Sabak)</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="newLessonForm">
+          <input type="hidden" id="newLessonStudentId">
+          <div class="modal-body py-4">
+            <div class="row g-2 mb-3">
+              <div class="col-12">
+                <label for="newSurah" class="form-label small text-secondary">Surah</label>
+                <input type="text" class="form-control" id="newSurah" placeholder="e.g. Al-Baqarah" required>
+              </div>
+              <div class="col-4">
+                <label for="newFromAyah" class="form-label small text-secondary">From Ayah</label>
+                <input type="number" class="form-control" id="newFromAyah" required min="1">
+              </div>
+              <div class="col-4">
+                <label for="newToAyah" class="form-label small text-secondary">To Ayah</label>
+                <input type="number" class="form-control" id="newToAyah" required min="1">
+              </div>
+              <div class="col-4">
+                <label for="newPageNumber" class="form-label small text-secondary">Page Number</label>
+                <input type="number" class="form-control" id="newPageNumber" required min="1" max="604">
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label small text-secondary">Grade</label>
+              <div class="d-flex gap-1">
+                <input type="radio" class="btn-check" name="newGrade" id="newGradeEx" value="Excellent" checked>
+                <label class="btn btn-sm btn-outline-success flex-grow-1" for="newGradeEx">Excellent</label>
+
+                <input type="radio" class="btn-check" name="newGrade" id="newGradeGd" value="Good">
+                <label class="btn btn-sm btn-outline-primary flex-grow-1" for="newGradeGd">Good</label>
+
+                <input type="radio" class="btn-check" name="newGrade" id="newGradeAv" value="Average">
+                <label class="btn btn-sm btn-outline-warning flex-grow-1" for="newGradeAv">Average</label>
+
+                <input type="radio" class="btn-check" name="newGrade" id="newGradeWk" value="Weak">
+                <label class="btn btn-sm btn-outline-danger flex-grow-1" for="newGradeWk">Weak</label>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="newRemarks" class="form-label small text-secondary">Remarks / Feedback</label>
+              <textarea class="form-control" id="newRemarks" rows="2" placeholder="Read clearly..."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary-premium btn-sm rounded-pill" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary-premium btn-sm rounded-pill px-4">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dawrah / Juz Modal -->
+  <div class="modal fade" id="dawrahModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-success"><i class="bi bi-bookmark-star-fill me-2"></i>Log Dawrah / Revision</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="dawrahForm">
+          <input type="hidden" id="dawrahStudentId">
+          <div class="modal-body py-4">
+            <div class="row g-2 mb-3">
+              <div class="col-4">
+                <label for="dawrahJuz" class="form-label small text-secondary">Juz Number</label>
+                <input type="number" class="form-control" id="dawrahJuz" required min="1" max="30" placeholder="12">
+              </div>
+              <div class="col-8">
+                <label for="dawrahSurah" class="form-label small text-secondary">Surah (Optional)</label>
+                <input type="text" class="form-control" id="dawrahSurah" placeholder="e.g. Hud">
+              </div>
+              <div class="col-6">
+                <label for="dawrahFromAyah" class="form-label small text-secondary">From Ayah</label>
+                <input type="number" class="form-control" id="dawrahFromAyah" placeholder="1">
+              </div>
+              <div class="col-6">
+                <label for="dawrahToAyah" class="form-label small text-secondary">To Ayah</label>
+                <input type="number" class="form-control" id="dawrahToAyah" placeholder="50">
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label small text-secondary">Grade</label>
+              <div class="d-flex gap-1">
+                <input type="radio" class="btn-check" name="dawrahGrade" id="dawrahGradeEx" value="Excellent" checked>
+                <label class="btn btn-sm btn-outline-success flex-grow-1" for="dawrahGradeEx">Excellent</label>
+
+                <input type="radio" class="btn-check" name="dawrahGrade" id="dawrahGradeGd" value="Good">
+                <label class="btn btn-sm btn-outline-primary flex-grow-1" for="dawrahGradeGd">Good</label>
+
+                <input type="radio" class="btn-check" name="dawrahGrade" id="dawrahGradeAv" value="Average">
+                <label class="btn btn-sm btn-outline-warning flex-grow-1" for="dawrahGradeAv">Average</label>
+
+                <input type="radio" class="btn-check" name="dawrahGrade" id="dawrahGradeWk" value="Weak">
+                <label class="btn btn-sm btn-outline-danger flex-grow-1" for="dawrahGradeWk">Weak</label>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="dawrahRemarks" class="form-label small text-secondary">Remarks / Feedback</label>
+              <textarea class="form-control" id="dawrahRemarks" rows="2" placeholder="Good revision fluency..."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary-premium btn-sm rounded-pill" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary-premium btn-sm rounded-pill px-4">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Achievements and Behaviors Trackers Modal -->
+  <div class="modal fade" id="extraTrackersModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content border-0">
+        <div class="modal-header">
+          <h5 class="modal-title fw-bold text-success"><i class="bi bi-award-fill me-2"></i>Akhlaq, Salah & Badges</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <form id="extraTrackersForm">
+          <input type="hidden" id="trackersStudentId">
+          <div class="modal-body py-4">
+            
+            <!-- Akhlaq Tracker -->
+            <div class="mb-4">
+              <label class="form-label small fw-semibold text-secondary d-block">Akhlaq / Behavior</label>
+              <select id="trackerAkhlaq" class="form-select">
+                <option value="Excellent">Excellent</option>
+                <option value="Good" selected>Good</option>
+                <option value="Average">Average</option>
+                <option value="Needs Improvement">Needs Improvement</option>
+              </select>
+            </div>
+
+            <!-- Salah Tracker -->
+            <div class="mb-4">
+              <label class="form-label small fw-semibold text-secondary d-block mb-2">Salah Tracker (Daily prayers completed)</label>
+              <div class="d-flex flex-wrap gap-3">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="salahFajr" checked>
+                  <label class="form-check-label small" for="salahFajr">Fajr</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="salahDhuhr" checked>
+                  <label class="form-check-label small" for="salahDhuhr">Dhuhr</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="salahAsr" checked>
+                  <label class="form-check-label small" for="salahAsr">Asr</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="salahMaghrib" checked>
+                  <label class="form-check-label small" for="salahMaghrib">Maghrib</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="salahIsha" checked>
+                  <label class="form-check-label small" for="salahIsha">Isha</label>
+                </div>
+              </div>
+            </div>
+
+            <!-- Badges System -->
+            <div>
+              <label class="form-label small fw-semibold text-secondary d-block mb-2">Awards & Badges</label>
+              <div class="d-flex flex-wrap gap-2">
+                <input type="checkbox" class="btn-check" id="badgeAttendance" value="Perfect Attendance">
+                <label class="btn btn-sm btn-outline-success" for="badgeAttendance"><i class="bi bi-calendar-check me-1"></i>Perfect Attendance</label>
+
+                <input type="checkbox" class="btn-check" id="badgeStreak" value="Continuous Sabak">
+                <label class="btn btn-sm btn-outline-warning" for="badgeStreak"><i class="bi bi-lightning-fill me-1"></i>Continuous Sabak</label>
+
+                <input type="checkbox" class="btn-check" id="badgeJuz" value="Juz Completion">
+                <label class="btn btn-sm btn-outline-info" for="badgeJuz"><i class="bi bi-bookmark-check me-1"></i>Juz Completion</label>
+
+                <input type="checkbox" class="btn-check" id="badgeStar" value="Monthly Star Student">
+                <label class="btn btn-sm btn-outline-primary" for="badgeStar"><i class="bi bi-star-fill me-1"></i>Monthly Star</label>
+
+                <input type="checkbox" class="btn-check" id="badgeExcellent" value="Excellent Performance">
+                <label class="btn btn-sm btn-outline-danger" for="badgeExcellent"><i class="bi bi-award-fill me-1"></i>Excellent Perf.</label>
+              </div>
+            </div>
+
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary-premium btn-sm rounded-pill" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary-premium btn-sm rounded-pill px-4">Update Details</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating Bottom Navigation -->
+  <nav class="bottom-nav no-print">
+    <a href="#" class="bottom-nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">
+      <i class="bi bi-grid-1x2"></i>
+      Dashboard
+    </a>
+    <a href="#" class="bottom-nav-item" id="nav-classes" onclick="switchTab('classes')">
+      <i class="bi bi-journal-bookmark"></i>
+      Classes
+    </a>
+    <a href="#" class="bottom-nav-item" id="nav-students" onclick="switchTab('students')">
+      <i class="bi bi-people"></i>
+      Students
+    </a>
+    <a href="#" class="bottom-nav-item" id="nav-daily" onclick="switchTab('daily')">
+      <i class="bi bi-pencil-square"></i>
+      Daily Entry
+    </a>
+    <a href="#" class="bottom-nav-item" id="nav-reports" onclick="switchTab('reports')">
+      <i class="bi bi-file-earmark-bar-graph"></i>
+      Reports
+    </a>
+  </nav>
+
+  <!-- Bootstrap 5 JS Bundle -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- Dashboard SPA Script coordination -->
+  <script type="module" src="src/app.js"></script>
+  <script type="text/javascript">
+    // Helper to expose switchTab to inline onclicks
+    window.switchTab = function(tabId) {
+      const event = new CustomEvent('tabchange', { detail: tabId });
+      window.dispatchEvent(event);
+    }
+  </script>
+</body>
+</html>

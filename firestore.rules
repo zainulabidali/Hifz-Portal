@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && userExists() && getUserData().role == 'super_admin';
+    }
+
+    function isMadrasaAdmin(madrasaId) {
+      return isAuthenticated() && userExists() && 
+        getUserData().role == 'madrasa_admin' && 
+        getUserData().madrasaId == madrasaId;
+    }
+
+    // Rules for User profiles
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isSuperAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update, delete: if isSuperAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+
+    // Rules for Madrasas
+    match /madrasas/{madrasaId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && request.auth.uid == madrasaId;
+      allow update: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      allow delete: if isSuperAdmin();
+      
+      // Details document/field rules
+      match /details/{detailId} {
+        allow read: if true;
+        allow write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      }
+
+      // Classes
+      match /classes/{classId} {
+        allow read: if true;
+        allow write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      }
+
+      // Students
+      match /students/{studentId} {
+        allow read: if true;
+        allow list: if isSuperAdmin() || isMadrasaAdmin(madrasaId) || request.query.limit <= 20;
+        allow write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+
+        // Reports
+        match /reports/{reportId} {
+          allow read: if true;
+          allow list: if isSuperAdmin() || isMadrasaAdmin(madrasaId) || request.query.limit <= 50;
+          allow write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+        }
+      }
+      
+      // Other settings
+      match /notifications/{notificationId} {
+        allow read, write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      }
+
+      match /settings/{settingId} {
+        allow read, write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      }
+
+      match /subscription/{subId} {
+        allow read, write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      }
+
+      match /achievements/{achId} {
+        allow read, write: if isSuperAdmin() || isMadrasaAdmin(madrasaId);
+      }
+    }
+
+    // Collection group rules for parent searches and leaderboards
+    match /{path=**}/students/{studentId} {
+      // Allow parent searches by admissionNumber and leaderboard listings (limited to top 20)
+      allow list: if isSuperAdmin() || (request.query.limit <= 20);
+      allow read: if true;
+    }
+
+    match /{path=**}/reports/{reportId} {
+      allow list: if isSuperAdmin() || isAuthenticated();
+      allow read: if true;
+    }
+  }
+}

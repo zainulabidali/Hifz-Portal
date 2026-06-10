@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parent Portal - Hifz Progress Platform</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Bootstrap Icons -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  
+  <style>
+    body {
+      background: radial-gradient(circle at 10% 20%, rgba(236, 253, 245, 0.4) 0%, rgba(248, 250, 252, 1) 90%);
+      padding-bottom: 50px;
+    }
+    
+    .parent-container {
+      width: 100%;
+      max-width: 620px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+    
+    /* Leaderboard Cards styling */
+    .rank-card-1 {
+      background: linear-gradient(135deg, rgba(254, 243, 199, 0.8) 0%, rgba(253, 230, 138, 0.5) 100%);
+      border: 2px solid #fbbf24 !important;
+      box-shadow: 0 10px 25px rgba(251, 191, 36, 0.15) !important;
+    }
+    .rank-card-2 {
+      background: linear-gradient(135deg, rgba(241, 245, 249, 0.9) 0%, rgba(226, 232, 240, 0.6) 100%);
+      border: 2px solid #94a3b8 !important;
+      box-shadow: 0 10px 25px rgba(148, 163, 184, 0.1) !important;
+    }
+    .rank-card-3 {
+      background: linear-gradient(135deg, rgba(255, 237, 213, 0.8) 0%, rgba(254, 215, 170, 0.5) 100%);
+      border: 2px solid #f97316 !important;
+      box-shadow: 0 10px 25px rgba(249, 115, 22, 0.1) !important;
+    }
+    
+    .rank-badge-1 { background: #fbbf24; color: #78350f; font-weight: 800; }
+    .rank-badge-2 { background: #94a3b8; color: #1e293b; font-weight: 800; }
+    .rank-badge-3 { background: #ea580c; color: #ffedd5; font-weight: 800; }
+    .rank-badge-other { background: #e2e8f0; color: #475569; font-weight: 600; }
+
+    /* SVG Radial Progress */
+    .progress-ring-container {
+      position: relative;
+      width: 130px;
+      height: 130px;
+      margin: 0 auto;
+    }
+    .progress-ring-circle {
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+    }
+    .progress-ring-bg {
+      fill: none;
+      stroke: #f1f5f9;
+      stroke-width: 10;
+    }
+    .progress-ring-bar {
+      fill: none;
+      stroke: var(--primary);
+      stroke-width: 10;
+      stroke-linecap: round;
+      stroke-dasharray: 377; /* 2 * PI * 60 */
+      stroke-dashoffset: 377;
+      transition: stroke-dashoffset 0.8s ease-in-out;
+    }
+    .progress-ring-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+    .progress-ring-text .percentage {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--primary);
+      line-height: 1;
+    }
+    
+    /* Timeline Achievements */
+    .timeline-vertical {
+      position: relative;
+      padding-left: 24px;
+      border-left: 2px solid #e2e8f0;
+      margin-left: 10px;
+    }
+    .timeline-vertical-item {
+      position: relative;
+      margin-bottom: 16px;
+    }
+    .timeline-vertical-bullet {
+      position: absolute;
+      left: -33px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 3px solid white;
+    }
+
+    .only-print-layout {
+      display: none !important;
+    }
+
+    @media print {
+      body {
+        background: white !important;
+        color: black !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .app-container, .parent-container {
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .glass-card {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+      }
+      .print-visible-table {
+        display: table !important;
+        width: 100% !important;
+      }
+      
+      body.print-daily-sheet #print-target-daily { display: block !important; }
+      body.print-daily-sheet .parent-container > :not(#print-target-daily) { display: none !important; }
+
+      body.print-weekly-sheet #print-target-weekly { display: block !important; }
+      body.print-weekly-sheet .parent-container > :not(#print-target-weekly) { display: none !important; }
+
+      body.print-monthly-sheet #print-target-monthly { display: block !important; }
+      body.print-monthly-sheet .parent-container > :not(#print-target-monthly) { display: none !important; }
+
+      body.print-yearly-sheet #print-target-yearly { display: block !important; }
+      body.print-yearly-sheet .parent-container > :not(#print-target-yearly) { display: none !important; }
+
+      body.print-history-sheet #print-target-history { display: block !important; }
+      body.print-history-sheet .parent-container > :not(#print-target-history) { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <main class="parent-container">
+
+    <!-- ==========================================
+         PANEL 0: GATEWAY ERROR SCREEN (MISSING ID)
+         ========================================== -->
+    <div id="parent-error-panel" class="d-none no-print my-5">
+      <div class="glass-card p-5 text-center">
+        <div class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <i class="bi bi-link-45deg fs-1"></i>
+        </div>
+        <h4 class="fw-bold text-danger mb-3">Invalid Portal Link</h4>
+        <p class="text-muted small mb-4">You have opened the Parent Portal without a designated Madrasa ID parameter. Each Madrasa owns a secure individual portal.</p>
+        <div class="glass-card bg-light border-0 p-3 small text-start">
+          <strong>How to access your portal:</strong>
+          <ol class="mb-0 mt-2 ps-3">
+            <li>Contact your Madrasa Admin or Head Usthad.</li>
+            <li>Request the dedicated <strong>Parent Portal Link</strong>.</li>
+            <li>Open the provided link on your phone.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+    
+    <!-- ==========================================
+         PANEL 1: SEARCH & LEADERBOARD (DEFAULT VIEW)
+         ========================================== -->
+    <div id="parent-search-panel" class="d-block no-print">
+      
+      <!-- Brand Logo Header -->
+      <div class="text-center my-4">
+        <div class="d-inline-flex align-items-center justify-content-center bg-success-subtle text-success rounded-circle p-3 mb-2" style="width: 64px; height: 64px;">
+          <i class="bi bi-person-heart fs-2"></i>
+        </div>
+        <h3 class="fw-bold mb-1 text-gradient" id="portalBrandingTitle">Hifz Parent Portal</h3>
+        <p class="text-muted small" id="portalBrandingSubtitle">Monitor your child's Quran memorization progress</p>
+      </div>
+
+      <!-- Real-time Search Box -->
+      <div class="glass-card p-4 mb-4">
+        <label for="parentSearchInput" class="form-label small fw-semibold text-secondary mb-2">Search Student</label>
+        <div class="position-relative">
+          <div class="input-group">
+            <span class="input-group-text bg-transparent border-end-0 text-muted"><i class="bi bi-search"></i></span>
+            <input type="text" id="parentSearchInput" class="form-control border-start-0 ps-0 form-control-lg" placeholder="Enter Student Name or Admission Number" autocomplete="off">
+          </div>
+        </div>
+        <div id="searchMessage" class="alert alert-danger d-none mt-3 py-2 small" role="alert"></div>
+      </div>
+
+      <!-- Search Results Grid (Visible on typing) -->
+      <div id="searchResultsSection" class="d-none mb-4">
+        <h5 class="fw-bold mb-3"><i class="bi bi-search text-success me-2"></i>Search Results</h5>
+        <div id="searchResultsContainer" class="row g-3">
+          <!-- Populated dynamically with beautiful student cards -->
+        </div>
+      </div>
+
+      <!-- LEADERBOARD SECTION -->
+      <div id="leaderboardSection" class="glass-card p-3">
+        <h5 class="fw-bold mb-3"><i class="bi bi-trophy-fill text-warning me-2"></i>Students Leaderboard</h5>
+        
+        <!-- Tab Selectors -->
+        <ul class="nav nav-pills nav-fill mb-3 bg-light p-1 rounded-pill" id="leaderboardTabs" role="tablist">
+          <li class="nav-item">
+            <button class="nav-link active rounded-pill py-2 small fw-semibold text-success" id="btn-ld-daily" onclick="switchLeaderboardTab('daily')">Daily</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link rounded-pill py-2 small fw-semibold" id="btn-ld-weekly" onclick="switchLeaderboardTab('weekly')">Weekly</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link rounded-pill py-2 small fw-semibold" id="btn-ld-monthly" onclick="switchLeaderboardTab('monthly')">Monthly</button>
+          </li>
+          <li class="nav-item">
+            <button class="nav-link rounded-pill py-2 small fw-semibold" id="btn-ld-alltime" onclick="switchLeaderboardTab('alltime')">All Time</button>
+          </li>
+        </ul>
+        
+        <!-- Leaderboard List -->
+        <div id="leaderboardList" class="d-flex flex-column gap-2">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <div class="text-center mt-3 small text-muted">
+        <a href="login.html" class="text-success fw-semibold text-decoration-none"><i class="bi bi-shield-lock me-1"></i>Staff / Usthad Portal Login</a>
+      </div>
+    </div>
+
+    <!-- ==========================================
+         PANEL 2: STUDENT PROFILE PAGE
+         ========================================== -->
+    <div id="parent-profile-panel" class="d-none">
+      
+      <!-- Action Toolbar (No Print) -->
+      <div class="d-flex justify-content-between align-items-center mb-3 no-print">
+        <button id="closeProfileBtn" class="btn btn-sm btn-secondary-premium rounded-pill px-3">
+          <i class="bi bi-arrow-left me-1"></i>Back
+        </button>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-primary-premium rounded-pill dropdown-toggle px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-download me-1"></i>Download PDF
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end border-0 shadow-lg" style="border-radius: var(--radius-md);">
+            <li><a class="dropdown-item py-2 small" href="#" onclick="printSection('daily')"><i class="bi bi-file-earmark-text me-2 text-success"></i>Daily Report PDF</a></li>
+            <li><a class="dropdown-item py-2 small" href="#" onclick="printSection('weekly')"><i class="bi bi-calendar-check me-2 text-primary"></i>Weekly Report PDF</a></li>
+            <li><a class="dropdown-item py-2 small" href="#" onclick="printSection('monthly')"><i class="bi bi-calendar3 me-2 text-warning"></i>Monthly Report PDF</a></li>
+            <li><a class="dropdown-item py-2 small" href="#" onclick="printSection('yearly')"><i class="bi bi-calendar-event me-2 text-secondary"></i>Yearly Report PDF</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item py-2 small" href="#" onclick="printSection('history')"><i class="bi bi-clock-history me-2 text-danger"></i>Full Student History PDF</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Student Profile Identity Header -->
+      <div class="glass-card mb-3 no-print">
+        <div class="d-flex align-items-center gap-3">
+          <img id="p-childPhoto" src="" class="student-avatar" style="width: 70px; height: 70px;" alt="Child" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=Student'">
+          <div class="flex-grow-1 min-w-0">
+            <h4 class="fw-bold mb-0 text-success text-truncate" id="p-childName">Loading Student...</h4>
+            <div class="small text-muted" id="p-childMeta">Adm: 1001 | Class Section</div>
+            <div class="small text-muted mt-1" style="font-size: 11px;">
+              <span>Parent: <strong id="p-childParentName">—</strong></span> | 
+              <span>Joined: <strong id="p-childJoiningDate">—</strong></span>
+            </div>
+            <div class="small fw-semibold text-primary mt-1" id="p-childMadrasa">Madrasa Academy</div>
+          </div>
+        </div>
+        
+        <div class="row pt-3 mt-3 border-top border-light-subtle g-2 text-center">
+          <div class="col-3 border-end">
+            <span class="small text-muted d-block" style="font-size: 10px;">Attendance</span>
+            <strong id="p-childAttendancePct" class="text-success">0%</strong>
+          </div>
+          <div class="col-3 border-end">
+            <span class="small text-muted d-block" style="font-size: 10px;">Completion</span>
+            <strong id="p-childCompletionPct" class="text-gradient">0%</strong>
+          </div>
+          <div class="col-3 border-end">
+            <span class="small text-muted d-block" style="font-size: 10px;">Rank Position</span>
+            <strong id="p-childRank" class="text-warning">#0</strong>
+          </div>
+          <div class="col-3">
+            <span class="small text-muted d-block" style="font-size: 10px;">Achievements</span>
+            <strong id="p-childBadgesCount" class="text-info">0</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leaderboard Position & Rank Change Tracker -->
+      <div class="glass-card mb-3 py-2 px-3 no-print bg-light border-0">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <i class="bi bi-graph-up-arrow text-success me-2"></i>
+            <span class="small text-muted">Current Standings:</span>
+          </div>
+          <div class="text-end">
+            <strong class="text-dark me-2" id="p-rankString">Rank #3</strong>
+            <span class="badge" id="p-rankChangeBadge">↑ 2 Positions</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Today's Progress Card -->
+      <div class="glass-card mb-3 no-print">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-bold mb-0"><i class="bi bi-bookmark-check-fill text-success me-2"></i>Today's Log Entry</h5>
+          <span id="p-todayAttendanceBadge" class="badge">Present</span>
+        </div>
+
+        <div class="row g-2">
+          <!-- Sabak -->
+          <div class="col-12">
+            <div id="p-sabakBox" class="p-2 rounded bg-light border-start border-3 border-success mb-1">
+              <span class="small text-secondary fw-semibold d-block">New Lesson (Sabak)</span>
+              <strong id="p-sabakText" class="d-block mt-1">Surah HUD (Ayah 1-10) - Pg: 221</strong>
+              <div class="d-flex justify-content-between align-items-center mt-1">
+                <span class="small text-muted" id="p-sabakRemarks">Excellent fluency</span>
+                <span class="grade-pill" id="p-sabakGrade">Excellent</span>
+              </div>
+            </div>
+          </div>
+          <!-- Sabqi -->
+          <div class="col-12 col-md-6">
+            <div id="p-sabqiBox" class="p-2 rounded bg-light border-start border-3 border-primary mb-1">
+              <span class="small text-secondary fw-semibold d-block">Previous Lesson (Sabqi)</span>
+              <strong id="p-sabqiText" class="d-block mt-1">Surah Yunus (Ayah 45-60)</strong>
+              <div class="d-flex justify-content-between align-items-center mt-1">
+                <span class="small text-muted" id="p-sabqiRemarks">Needs standard corrections</span>
+                <span class="grade-pill" id="p-sabqiGrade">Good</span>
+              </div>
+            </div>
+          </div>
+          <!-- Dawrah -->
+          <div class="col-12 col-md-6">
+            <div id="p-dawrahBox" class="p-2 rounded bg-light border-start border-3 border-warning mb-1">
+              <span class="small text-secondary fw-semibold d-block">Dawrah / Juz Revision</span>
+              <strong id="p-dawrahText" class="d-block mt-1">Juz 11</strong>
+              <div class="d-flex justify-content-between align-items-center mt-1">
+                <span class="small text-muted" id="p-dawrahRemarks">Read fluently</span>
+                <span class="grade-pill" id="p-dawrahGrade">Good</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Behavior Trackers -->
+        <div class="row g-2 mt-3 pt-2 border-top border-light-subtle">
+          <div class="col-6">
+            <span class="small text-muted d-block">Behavior Grade (Akhlaq)</span>
+            <strong id="p-todayAkhlaq" class="text-success">Excellent</strong>
+          </div>
+          <div class="col-6">
+            <span class="small text-muted d-block">Completed Daily Salahs</span>
+            <strong id="p-todaySalah" class="text-success">5 / 5 Prayers</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Current Position Status -->
+      <div class="glass-card mb-3 no-print">
+        <h5 class="fw-bold mb-3"><i class="bi bi-compass-fill text-success me-2"></i>Current Quran Position</h5>
+        <div class="position-tracker pt-0 bg-transparent border-0 px-0">
+          <div class="position-tracker-item">
+            <span class="text-success" id="posJuz">0</span>
+            Current Juz
+          </div>
+          <div class="position-tracker-item">
+            <span class="text-success" id="posSurah">—</span>
+            Current Surah
+          </div>
+          <div class="position-tracker-item">
+            <span class="text-success" id="posPage">0</span>
+            Current Page
+          </div>
+          <div class="position-tracker-item">
+            <span class="text-success" id="posPagesTotal">0</span>
+            Pages Memorized
+          </div>
+        </div>
+      </div>
+
+      <!-- ANALYTICS SECTION -->
+      <h5 class="fw-bold mb-3 no-print"><i class="bi bi-bar-chart-line-fill text-success me-2"></i>Performance Analytics</h5>
+      
+      <div class="row g-3 no-print">
+        <!-- Completion Circle (Radial Progress) -->
+        <div class="col-12 col-md-6">
+          <div class="glass-card mb-0 text-center p-3 h-100">
+            <span class="small text-muted fw-semibold d-block mb-3">Quran Memorization Completion</span>
+            <div class="progress-ring-container">
+              <svg class="progress-ring-circle" width="130" height="130">
+                <circle class="progress-ring-bg" cx="65" cy="65" r="60"></circle>
+                <circle id="p-completionRing" class="progress-ring-bar" cx="65" cy="65" r="60"></circle>
+              </svg>
+              <div class="progress-ring-text">
+                <div class="percentage" id="p-completionRingPct">0%</div>
+                <span class="text-muted" style="font-size: 9px; font-weight: 500;">Completed</span>
+              </div>
+            </div>
+            <span class="small text-muted mt-3 d-block" id="p-completionRingRatio">0 of 604 pages</span>
+          </div>
+        </div>
+
+        <!-- Grade Distribution Doughnut -->
+        <div class="col-12 col-md-6">
+          <div class="glass-card mb-0 p-3 h-100">
+            <span class="small text-muted fw-semibold d-block text-center mb-2">Lesson Grade Distribution</span>
+            <div class="chart-container">
+              <canvas id="c-gradeDistribution"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Memorization Growth Area Chart -->
+        <div class="col-12">
+          <div class="glass-card mb-0 p-3">
+            <span class="small text-muted fw-semibold d-block mb-2">Memorization Growth Tracker (Chronological Pages)</span>
+            <div class="chart-container">
+              <canvas id="c-memorizationGrowth"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Performance Trend Line -->
+        <div class="col-12 col-md-6">
+          <div class="glass-card mb-0 p-3">
+            <span class="small text-muted fw-semibold d-block mb-2">Weekly Performance Grade Trend</span>
+            <div class="chart-container">
+              <canvas id="c-performanceTrend"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Attendance Trend Area -->
+        <div class="col-12 col-md-6">
+          <div class="glass-card mb-0 p-3">
+            <span class="small text-muted fw-semibold d-block mb-2">Attendance Trend Log</span>
+            <div class="chart-container">
+              <canvas id="c-attendanceTrend"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Juz Completion Progress -->
+        <div class="col-12 col-md-6">
+          <div class="glass-card mb-0 p-3 h-100">
+            <span class="small text-muted fw-semibold d-block mb-2">Juz Memorization Status (1-30)</span>
+            <div class="chart-container">
+              <canvas id="c-juzProgress"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Monthly Progress Bar -->
+        <div class="col-12 col-md-6">
+          <div class="glass-card mb-0 p-3 h-100">
+            <span class="small text-muted fw-semibold d-block mb-2">Monthly Memorized Logs Volume</span>
+            <div class="chart-container">
+              <canvas id="c-monthlyVolume"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Achievements -->
+      <div class="glass-card mt-3 no-print">
+        <h5 class="fw-bold mb-3"><i class="bi bi-award-fill text-warning me-2"></i>Achievements & Badges</h5>
+        <div class="timeline-vertical" id="p-timelineList">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- History Reports Logger Section (For filtering list views) -->
+      <div class="glass-card mt-3 no-print">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h5 class="fw-bold mb-0"><i class="bi bi-clock-history text-success me-2"></i>Student History Log</h5>
+          <select id="historyFilterSelect" class="form-select form-select-sm text-muted rounded-pill" style="width: 140px;">
+            <option value="full">Full History</option>
+            <option value="daily">Daily View</option>
+            <option value="weekly">Weekly View</option>
+            <option value="monthly">Monthly View</option>
+            <option value="yearly">Yearly View</option>
+          </select>
+        </div>
+        <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+          <table class="table table-sm table-striped align-middle mb-0" style="font-size: 12px;">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Attendance</th>
+                <th>Sabak (New)</th>
+                <th>Sabqi (Prev)</th>
+              </tr>
+            </thead>
+            <tbody id="p-historyTableBody">
+              <!-- Rendered dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ==========================================
+           PDF PRINT OUTPUT TEMPLATES (HIDDEN BY DEFAULT)
+           ========================================== -->
+      
+      <!-- 1. Daily Report Template -->
+      <div id="print-target-daily" class="only-print-layout py-3">
+        <div class="border-bottom pb-3 mb-3 d-flex justify-content-between">
+          <div>
+            <h3 class="fw-bold text-success mb-0" id="print-daily-madrasa">Darul Quran Academy</h3>
+            <span class="small text-muted" id="print-daily-madrasa-loc">Kochi, Kerala</span>
+          </div>
+          <div class="text-end">
+            <h5 class="fw-bold mb-0">DAILY HIFZ REPORT</h5>
+            <span id="print-daily-date" class="small text-muted">June 10, 2026</span>
+          </div>
+        </div>
+        
+        <div class="mb-4">
+          <h5>Child Profile</h5>
+          <table class="table table-bordered align-middle">
+            <tr>
+              <td><strong>Student Name:</strong></td>
+              <td id="print-daily-name">Zaid Yusuf</td>
+              <td><strong>Admission Number:</strong></td>
+              <td id="print-daily-adm">1001</td>
+            </tr>
+            <tr>
+              <td><strong>Assigned Class:</strong></td>
+              <td id="print-daily-class">Class Hifz-A</td>
+              <td><strong>Current Position:</strong></td>
+              <td id="print-daily-pos">Juz 12 | Surah Yusuf | Pg 235</td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="mb-4">
+          <h5>Today's Memorization Progress</h5>
+          <table class="table table-bordered align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>Category</th>
+                <th>Details</th>
+                <th>Grade</th>
+                <th>Usthad Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Sabak (New Lesson)</strong></td>
+                <td id="print-daily-sabak-det">Surah Yusuf (Ayah 1-10)</td>
+                <td id="print-daily-sabak-grd">Excellent</td>
+                <td id="print-daily-sabak-rem">Fluent and well prepared.</td>
+              </tr>
+              <tr>
+                <td><strong>Sabqi (Previous Lesson)</strong></td>
+                <td id="print-daily-sabqi-det">Surah Hud (Ayah 50-60)</td>
+                <td id="print-daily-sabqi-grd">Good</td>
+                <td id="print-daily-sabqi-rem">Minor correction.</td>
+              </tr>
+              <tr>
+                <td><strong>Dawrah (Juz Revision)</strong></td>
+                <td id="print-daily-dawrah-det">Juz 11</td>
+                <td id="print-daily-dawrah-grd">Excellent</td>
+                <td id="print-daily-dawrah-rem">Strong retention.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mb-4">
+          <h5>Trackers</h5>
+          <p><strong>Behavior/Akhlaq:</strong> <span id="print-daily-akhlaq">Excellent</span></p>
+          <p><strong>Salah Performance:</strong> <span id="print-daily-salah">5 / 5 daily prayers performed.</span></p>
+        </div>
+
+        <div class="d-flex justify-content-between mt-5 pt-3 border-top text-muted" style="font-size: 12px;">
+          <span>Signature of Usthad: ________________________</span>
+          <span>Parent Signature: ________________________</span>
+        </div>
+      </div>
+
+      <!-- 2. Weekly Report Template -->
+      <div id="print-target-weekly" class="only-print-layout py-3">
+        <div class="border-bottom pb-3 mb-3 d-flex justify-content-between">
+          <div>
+            <h3 class="fw-bold text-success mb-0" id="print-weekly-madrasa">Darul Quran Academy</h3>
+          </div>
+          <div class="text-end">
+            <h5 class="fw-bold mb-0">WEEKLY PROGRESS REPORT</h5>
+            <span class="small text-muted">Weekly Summary (Last 15 logs)</span>
+          </div>
+        </div>
+        
+        <table class="table table-bordered mb-4">
+          <tr>
+            <td><strong>Student:</strong> <span id="print-weekly-name">Zaid Yusuf</span></td>
+            <td><strong>Adm No:</strong> <span id="print-weekly-adm">1001</span></td>
+            <td><strong>Current Position:</strong> <span id="print-weekly-pos">Juz 12</span></td>
+          </tr>
+        </table>
+
+        <table class="table table-bordered table-striped" style="font-size: 11px;">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Attendance</th>
+              <th>Sabak (New)</th>
+              <th>Sabqi (Prev)</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody id="print-weekly-table-body">
+            <!-- Populated on print -->
+          </tbody>
+        </table>
+        
+        <div class="d-flex justify-content-between mt-5 pt-3 border-top text-muted" style="font-size: 12px;">
+          <span>Signature of Usthad: ________________________</span>
+          <span>Parent Signature: ________________________</span>
+        </div>
+      </div>
+
+      <!-- 3. Monthly Report Template -->
+      <div id="print-target-monthly" class="only-print-layout py-3">
+        <div class="border-bottom pb-3 mb-3 d-flex justify-content-between">
+          <div>
+            <h3 class="fw-bold text-success mb-0" id="print-monthly-madrasa">Darul Quran Academy</h3>
+          </div>
+          <div class="text-end">
+            <h5 class="fw-bold mb-0">MONTHLY SUMMARY REPORT</h5>
+            <span class="small text-muted">Monthly Overview (Last 30 logs)</span>
+          </div>
+        </div>
+        
+        <table class="table table-bordered mb-4">
+          <tr>
+            <td><strong>Student:</strong> <span id="print-monthly-name">Zaid Yusuf</span></td>
+            <td><strong>Adm No:</strong> <span id="print-monthly-adm">1001</span></td>
+            <td><strong>Position:</strong> <span id="print-monthly-pos">Juz 12</span></td>
+          </tr>
+        </table>
+
+        <table class="table table-bordered table-striped" style="font-size: 11px;">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Attendance</th>
+              <th>Sabak (New)</th>
+              <th>Sabqi (Prev)</th>
+              <th>Dawrah</th>
+            </tr>
+          </thead>
+          <tbody id="print-monthly-table-body">
+            <!-- Populated on print -->
+          </tbody>
+        </table>
+
+        <div class="d-flex justify-content-between mt-5 pt-3 border-top text-muted" style="font-size: 12px;">
+          <span>Signature of Usthad: ________________________</span>
+          <span>Parent Signature: ________________________</span>
+        </div>
+      </div>
+
+      <!-- 4. Yearly Report Template -->
+      <div id="print-target-yearly" class="only-print-layout py-3">
+        <div class="border-bottom pb-3 mb-3 d-flex justify-content-between">
+          <div>
+            <h3 class="fw-bold text-success mb-0" id="print-yearly-madrasa">Darul Quran Academy</h3>
+          </div>
+          <div class="text-end">
+            <h5 class="fw-bold mb-0">YEARLY PROGRESS STATEMENT</h5>
+            <span class="small text-muted" id="print-yearly-date">Statement Date</span>
+          </div>
+        </div>
+
+        <div class="glass-card bg-transparent border p-3 mb-4">
+          <h5>Academic Statement</h5>
+          <p>This document certifies the yearly progress of student <strong id="print-yearly-name">Zaid Yusuf</strong> (Adm: <strong id="print-yearly-adm">1001</strong>).</p>
+          <ul>
+            <li>Joining Date: <strong id="print-yearly-join">2025-01-10</strong></li>
+            <li>Current Progress: <strong id="print-yearly-pos">Juz 12 | Surah Yusuf | Pg 235</strong></li>
+            <li>Achievements Unlocked: <strong id="print-yearly-badges">5 Badges</strong></li>
+          </ul>
+        </div>
+
+        <table class="table table-bordered table-striped" style="font-size: 11px;">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Attendance</th>
+              <th>New Lesson (Sabak)</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody id="print-yearly-table-body">
+            <!-- Populated on print -->
+          </tbody>
+        </table>
+
+        <div class="d-flex justify-content-between mt-5 pt-3 border-top text-muted" style="font-size: 12px;">
+          <span>Signature of Usthad: ________________________</span>
+          <span>Parent Signature: ________________________</span>
+        </div>
+      </div>
+
+      <!-- 5. Full History Statement Template -->
+      <div id="print-target-history" class="only-print-layout py-3">
+        <div class="border-bottom pb-3 mb-3 d-flex justify-content-between">
+          <div>
+            <h3 class="fw-bold text-success mb-0" id="print-history-madrasa">Darul Quran Academy</h3>
+          </div>
+          <div class="text-end">
+            <h5 class="fw-bold mb-0">COMPLETE STUDENT PROGRESS LEDGER</h5>
+            <span class="small text-muted">Complete Historical Ledger from Enrollment</span>
+          </div>
+        </div>
+        
+        <table class="table table-bordered mb-4">
+          <tr>
+            <td><strong>Student:</strong> <span id="print-history-name">Zaid Yusuf</span></td>
+            <td><strong>Adm No:</strong> <span id="print-history-adm">1001</span></td>
+            <td><strong>Class:</strong> <span id="print-history-class">Class Hifz A</span></td>
+          </tr>
+        </table>
+
+        <table class="table table-bordered table-striped" style="font-size: 10px;">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Attendance</th>
+              <th>Sabak (New)</th>
+              <th>Sabqi (Prev)</th>
+              <th>Dawrah</th>
+              <th>Remarks</th>
+            </tr>
+          </thead>
+          <tbody id="print-history-table-body">
+            <!-- Populated on print -->
+          </tbody>
+        </table>
+
+        <div class="d-flex justify-content-between mt-5 pt-3 border-top text-muted" style="font-size: 12px;">
+          <span>Signature of Usthad: ________________________</span>
+          <span>Parent Signature: ________________________</span>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Portal Script coordination -->
+  <script type="module" src="src/parent-portal.js"></script>
+</body>
+</html>

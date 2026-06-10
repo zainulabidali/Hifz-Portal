@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hifz Progress Portal</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    body {
+      background: radial-gradient(circle at 10% 20%, #10b981 0%, #059669 90%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: white;
+      overflow: hidden;
+      padding-bottom: 0;
+    }
+    .splash-container {
+      text-align: center;
+      animation: fadeIn 1s ease-out;
+    }
+    .loader {
+      width: 48px;
+      height: 48px;
+      border: 5px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top-color: white;
+      display: inline-block;
+      box-sizing: border-box;
+      animation: rotation 1s linear infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes rotation {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95); }
+      to { opacity: 1; transform: scale(1); }
+    }
+  </style>
+</head>
+<body>
+  <div class="splash-container">
+    <div class="loader"></div>
+    <h3 class="fw-bold">HIFZ PROGRESS PORTAL</h3>
+    <p class="text-white-50">Loading your space, please wait...</p>
+  </div>
+
+  <script type="module">
+    import { checkAuthState } from "./src/auth.js";
+    // Check if user is logged in as madrasa admin and route them accordingly
+    // The checkAuthState function takes care of routing inside
+    checkAuthState("madrasa_admin", (user, madrasa) => {
+      // Callback is called if authenticated and routed already
+      console.log("Routing completed");
+    });
+  </script>
+</body>
+</html>
