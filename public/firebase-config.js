@@ -22,7 +22,7 @@ let isOfflineMode = false;
 
 try {
   // Check if API key is still placeholder or if we want to force offline simulation for testing
-  if (firebaseConfig.apiKey.includes("Placeholder") || window.location.hostname === "localhost" && localStorage.getItem("force_offline") === "true") {
+  if (firebaseConfig.apiKey.includes("Placeholder") || (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") && localStorage.getItem("force_offline") === "true") {
     console.warn("Using Offline Simulation mode because placeholder Firebase credentials are set.");
     isOfflineMode = true;
   } else {

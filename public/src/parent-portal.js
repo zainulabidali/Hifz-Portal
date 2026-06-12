@@ -1,5 +1,6 @@
 import { getStudentReports, getStudents, getClasses } from "./db.js";
 import { isOfflineMode, db } from "../firebase-config.js";
+import { showToast } from "./ui-notifications.js";
 import { 
   collection, 
   doc, 
@@ -12,7 +13,12 @@ import {
 
 // URL parameters
 const urlParams = new URLSearchParams(window.location.search);
-const madrasaId = urlParams.get("madrasaId");
+// Support all possible parameter variations: madrasaId, madrasaID, madrasaid, id, portalId
+const madrasaId = urlParams.get("madrasaId") || 
+                  urlParams.get("madrasaID") || 
+                  urlParams.get("madrasaid") || 
+                  urlParams.get("id") || 
+                  urlParams.get("portalId");
 
 // State caching
 let madrasaDetails = null;
@@ -33,43 +39,206 @@ let chartMonthlyVolume = null;
 const RING_CIRCUMFERENCE = 377; // 2 * PI * 60
 
 document.addEventListener("DOMContentLoaded", async () => {
+  console.log("Portal URL:", window.location.href);
+  console.log("Madrasa ID:", madrasaId);
+
   if (!madrasaId) {
-    showGatewayError();
+    showGatewayError("Missing ID", "You have opened the Parent Portal without a designated Madrasa ID parameter. Each Madrasa owns a secure individual portal.", "bi-link-45deg", true);
     return;
   }
 
-  await loadPortalData();
-  setupSearchSystem();
-  setupPrintTriggers();
-  switchLeaderboardTab("daily");
+  // Validate ID: check if it's alphanumeric or valid format for Firebase UID (letters, numbers, underscores, hyphens)
+  const isValidId = /^[a-zA-Z0-9_-]+$/.test(madrasaId);
+  if (!isValidId || madrasaId.toLowerCase().includes("placeholder") || madrasaId.toLowerCase().includes("xxxxx")) {
+    showGatewayError("Invalid ID", `The Madrasa ID parameter "${madrasaId}" contains invalid characters or template placeholders.`, "bi-exclamation-triangle", true);
+    return;
+  }
+
+  // Setup initial loading screen state
+  showLoadingScreen("Connecting to Portal...", "Verifying database connections and gathering reports.");
+
+  const success = await loadPortalData();
+  if (success) {
+    hideLoadingScreen();
+    setupSearchSystem();
+    setupPrintTriggers();
+    switchLeaderboardTab("daily");
+  }
 });
 
-function showGatewayError() {
+function showLoadingScreen(title = "Connecting to Portal...", message = "") {
   document.getElementById("parent-search-panel").classList.add("d-none");
   document.getElementById("parent-profile-panel").classList.add("d-none");
-  document.getElementById("parent-error-panel").classList.remove("d-none");
+  document.getElementById("parent-error-panel").classList.add("d-none");
+  
+  const loadingPanel = document.getElementById("parent-loading-panel");
+  if (loadingPanel) {
+    loadingPanel.classList.remove("d-none");
+    document.getElementById("parent-loading-title").textContent = title;
+    document.getElementById("parent-loading-message").textContent = message;
+  }
+}
+
+function hideLoadingScreen() {
+  const loadingPanel = document.getElementById("parent-loading-panel");
+  if (loadingPanel) {
+    loadingPanel.classList.add("d-none");
+  }
+  
+  // Show default search panel
+  const searchPanel = document.getElementById("parent-search-panel");
+  if (searchPanel) {
+    searchPanel.classList.remove("d-none");
+    searchPanel.classList.add("d-block");
+  }
+}
+
+function showGatewayError(type, message, iconClass = "bi-exclamation-triangle", showInstructions = true) {
+  // Hide loading, search, profile panels
+  const loadingPanel = document.getElementById("parent-loading-panel");
+  if (loadingPanel) loadingPanel.classList.add("d-none");
+  document.getElementById("parent-search-panel").classList.add("d-none");
+  document.getElementById("parent-profile-panel").classList.add("d-none");
+  
+  const errorPanel = document.getElementById("parent-error-panel");
+  errorPanel.classList.remove("d-none");
+  
+  const titleEl = document.getElementById("parent-error-title");
+  const msgEl = document.getElementById("parent-error-message");
+  const iconEl = document.getElementById("parent-error-icon");
+  const iconContainerEl = document.getElementById("parent-error-icon-container");
+  const instructionsEl = document.getElementById("parent-error-instructions");
+  
+  if (titleEl) titleEl.textContent = type;
+  if (msgEl) msgEl.textContent = message;
+  
+  if (iconEl) {
+    iconEl.className = `bi ${iconClass} fs-1`;
+  }
+  
+  // Custom styling based on error severity
+  if (iconContainerEl) {
+    if (type.includes("Permission") || type.includes("Security")) {
+      iconContainerEl.className = "d-inline-flex align-items-center justify-content-center bg-warning-subtle text-warning rounded-circle p-4 mb-4";
+    } else if (type.includes("Error") || type.includes("Network")) {
+      iconContainerEl.className = "d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4";
+    } else {
+      iconContainerEl.className = "d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4";
+    }
+  }
+  
+  if (instructionsEl) {
+    if (showInstructions) {
+      instructionsEl.classList.remove("d-none");
+    } else {
+      instructionsEl.classList.add("d-none");
+    }
+  }
+}
+
+function updatePortalUI() {
+  if (madrasaDetails) {
+    document.getElementById("portalBrandingTitle").textContent = madrasaDetails.name;
+    document.getElementById("portalBrandingLocation").textContent = madrasaDetails.location || "Location not set";
+    document.getElementById("portalBrandingContact").textContent = madrasaDetails.mobile || madrasaDetails.phone || "No Contact info";
+    document.getElementById("portalBrandingEmail").textContent = madrasaDetails.email || "No Email info";
+
+    const logoEl = document.getElementById("portalBrandingLogo");
+    if (logoEl) {
+      logoEl.src = madrasaDetails.logoUrl || "assets/madrasa_logo.png";
+    }
+
+    const heroEl = document.getElementById("portalBrandingHero");
+    if (heroEl) {
+      if (madrasaDetails.bannerUrl) {
+        heroEl.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('${madrasaDetails.bannerUrl}')`;
+      } else {
+        heroEl.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('assets/madrasa_banner.png')`;
+      }
+    }
+
+    document.getElementById("statsStudentCount").textContent = students.length;
+    document.getElementById("statsClassCount").textContent = classes.length;
+  }
 }
 
 async function loadPortalData() {
+  const cacheKeyMadrasa = `cache_parent_madrasa_${madrasaId}`;
+  const cacheKeyClasses = `cache_parent_classes_${madrasaId}`;
+  const cacheKeyStudents = `cache_parent_students_${madrasaId}`;
+  const cacheKeyTime = `cache_parent_time_${madrasaId}`;
+
+  const cachedMadrasa = localStorage.getItem(cacheKeyMadrasa);
+  const cachedClasses = localStorage.getItem(cacheKeyClasses);
+  const cachedStudents = localStorage.getItem(cacheKeyStudents);
+  const cachedTime = localStorage.getItem(cacheKeyTime);
+  const now = Date.now();
+
+  let hasValidCache = false;
+  if (cachedMadrasa && cachedClasses && cachedStudents) {
+    try {
+      madrasaDetails = JSON.parse(cachedMadrasa);
+      classes = JSON.parse(cachedClasses);
+      students = JSON.parse(cachedStudents);
+      hasValidCache = true;
+    } catch (e) {
+      console.error("Failed to parse cached portal data", e);
+    }
+  }
+
+  if (hasValidCache) {
+    console.log("Loading page instantly from Stale-While-Revalidate Cache...");
+    updatePortalUI();
+    // Render leaderboard with cached data initially
+    switchLeaderboardTab(leaderboardActiveTab);
+
+    // If cache is fresh (less than 30 seconds old), bypass revalidation
+    if (cachedTime && (now - parseInt(cachedTime) < 30000)) {
+      console.log("Parent Portal: Using cached data (fresh)");
+      return true;
+    }
+
+    // Trigger background update silently to avoid disrupting visible UI on connection errors
+    fetchFreshPortalData(true).catch(err => {
+      console.warn("Background revalidation sync failed. Keeping stale cache active.", err);
+    });
+    return true; // Return true immediately to show page content
+  }
+
+  // No cache available. We must block and load initially
+  return await fetchFreshPortalData(false);
+}
+
+async function fetchFreshPortalData(isBackground = false) {
+  const cacheKeyMadrasa = `cache_parent_madrasa_${madrasaId}`;
+  const cacheKeyClasses = `cache_parent_classes_${madrasaId}`;
+  const cacheKeyStudents = `cache_parent_students_${madrasaId}`;
+  const cacheKeyTime = `cache_parent_time_${madrasaId}`;
+
   try {
     if (isOfflineMode) {
       // Offline Simulation Data Fetch
       const mockMMap = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
-      madrasaDetails = mockMMap[madrasaId];
-      if (!madrasaDetails) {
-        throw new Error("Madrasa profile not found locally.");
+      const localMadrasa = mockMMap[madrasaId];
+      if (!localMadrasa) {
+        if (isBackground) {
+          showToast("Madrasa profile was not found in background refresh.", "warning");
+        } else {
+          showGatewayError("Madrasa Not Found", `We couldn't find a Madrasa matching the ID "${madrasaId}" in our offline database.`, "bi-exclamation-triangle", true);
+        }
+        return false;
       }
 
       // Load classes
       const mockClasses = JSON.parse(localStorage.getItem(`mock_classes_${madrasaId}`)) || {};
-      classes = Object.values(mockClasses);
+      const freshClasses = Object.values(mockClasses);
 
       // Load students
       const mockStudents = JSON.parse(localStorage.getItem(`mock_students_${madrasaId}`)) || {};
-      students = Object.values(mockStudents);
+      const freshStudents = Object.values(mockStudents);
 
       // Ensure rankings and mock scores are set
-      students.forEach(s => {
+      freshStudents.forEach(s => {
         s.score = s.score || ((s.currentPage || 1) * 10 + (s.achievements || []).length * 50);
         s.dailyScore = s.dailyScore || (Math.round(s.score * 0.1) + Math.floor(Math.random() * 20));
         s.weeklyScore = s.weeklyScore || (Math.round(s.score * 0.4) + Math.floor(Math.random() * 50));
@@ -78,24 +247,86 @@ async function loadPortalData() {
         s.previousRank = s.previousRank || (s.currentRank + (Math.random() > 0.5 ? 1 : -1));
       });
 
+      // Write updates to state variables
+      madrasaDetails = localMadrasa;
+      classes = freshClasses;
+      students = freshStudents;
+
+      // Save to cache
+      localStorage.setItem(cacheKeyMadrasa, JSON.stringify(madrasaDetails));
+      localStorage.setItem(cacheKeyClasses, JSON.stringify(classes));
+      localStorage.setItem(cacheKeyStudents, JSON.stringify(students));
+      localStorage.setItem(cacheKeyTime, Date.now().toString());
+
+      updatePortalUI();
+      return true;
     } else {
       // Live Firebase Data Fetch
-      const mDoc = await getDoc(doc(db, "madrasas", madrasaId));
-      if (!mDoc.exists()) {
-        throw new Error("Madrasa profile not found in cloud database.");
+      console.log("Madrasa ID:", madrasaId);
+
+      let mDoc;
+      try {
+        mDoc = await getDoc(doc(db, "madrasas", madrasaId));
+      } catch (dbErr) {
+        console.error("Firestore read error:", dbErr);
+        if (isBackground) {
+          showToast("Network sync error. Displaying offline data.", "warning");
+        } else {
+          if (dbErr.code === "permission-denied" || dbErr.message?.includes("permission")) {
+            showGatewayError("Permission Error", "Access denied. You do not have permissions to read this Madrasa's database. Please verify the URL link.", "bi-shield-lock", false);
+          } else {
+            showGatewayError("Network Error", `A database connection error occurred: ${dbErr.message}. Check your connection.`, "bi-wifi-off", false);
+          }
+        }
+        return false;
       }
-      madrasaDetails = mDoc.data();
+
+      console.log("Before Not Found Trigger");
+      console.log("Madrasa Loaded:", mDoc.exists() ? mDoc.data() : null);
+
+      if (!mDoc.exists()) {
+        if (isBackground) {
+          showToast("This Madrasa profile was not found on the database.", "warning");
+        } else {
+          console.trace();
+          showGatewayError("Madrasa Not Found", `We couldn't find any Madrasa registered with the ID "${madrasaId}" in our cloud database.`, "bi-exclamation-triangle", true);
+        }
+        return false;
+      }
+      const freshMadrasaDetails = mDoc.data();
 
       // Classes
-      const cSnapshot = await getDocs(collection(db, "madrasas", madrasaId, "classes"));
-      classes = cSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      let freshClasses = [];
+      try {
+        const cSnapshot = await getDocs(collection(db, "madrasas", madrasaId, "classes"));
+        freshClasses = cSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (classErr) {
+        console.error("Error loading classes:", classErr);
+        if (isBackground) {
+          showToast("Failed to refresh class registry.", "warning");
+        } else {
+          showGatewayError("Firestore Error", `Failed to load classes from database: ${classErr.message}`, "bi-exclamation-octagon", false);
+        }
+        return false;
+      }
 
       // Students - limited to 20 to conform to security rules
-      const sSnapshot = await getDocs(query(collection(db, "madrasas", madrasaId, "students"), limit(20)));
-      students = sSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      let freshStudents = [];
+      try {
+        const sSnapshot = await getDocs(query(collection(db, "madrasas", madrasaId, "students"), limit(20)));
+        freshStudents = sSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (studentErr) {
+        console.error("Error loading students:", studentErr);
+        if (isBackground) {
+          showToast("Failed to refresh students list.", "warning");
+        } else {
+          showGatewayError("Firestore Error", `Failed to load students from database: ${studentErr.message}`, "bi-exclamation-octagon", false);
+        }
+        return false;
+      }
 
       // Setup default mock rank fields for sorting if none exists on firestore
-      students.forEach(s => {
+      freshStudents.forEach(s => {
         s.score = s.score || ((s.currentPage || 1) * 10);
         s.dailyScore = s.dailyScore || Math.round(s.score * 0.15);
         s.weeklyScore = s.weeklyScore || Math.round(s.score * 0.45);
@@ -103,15 +334,28 @@ async function loadPortalData() {
         s.currentRank = s.currentRank || 1;
         s.previousRank = s.previousRank || 2;
       });
+
+      // Compare and update cache
+      madrasaDetails = freshMadrasaDetails;
+      classes = freshClasses;
+      students = freshStudents;
+
+      localStorage.setItem(cacheKeyMadrasa, JSON.stringify(madrasaDetails));
+      localStorage.setItem(cacheKeyClasses, JSON.stringify(classes));
+      localStorage.setItem(cacheKeyStudents, JSON.stringify(freshStudents));
+      localStorage.setItem(cacheKeyTime, Date.now().toString());
+
+      updatePortalUI();
+      return true;
     }
-
-    // Set portal header titles
-    document.getElementById("portalBrandingTitle").textContent = madrasaDetails.name;
-    document.getElementById("portalBrandingSubtitle").textContent = `Parent Access Portal — Location: ${madrasaDetails.location}`;
-
   } catch (error) {
-    console.error(error);
-    showGatewayError();
+    console.error("Error fetching fresh portal data:", error);
+    if (isBackground) {
+      showToast("Background update failed. Keeping cached data.", "warning");
+    } else {
+      showGatewayError("Loading Error", `An unexpected error occurred while loading portal data: ${error.message}`, "bi-exclamation-diamond", false);
+    }
+    return false;
   }
 }
 
@@ -898,7 +1142,7 @@ window.printSection = function(type) {
   const className = classes.find(c => c.id === s.classId)?.name || "Unassigned";
 
   if (logs.length === 0) {
-    alert("No records logged to download.");
+    showToast("No records logged to download.", "warning");
     return;
   }
 
@@ -962,6 +1206,7 @@ window.printSection = function(type) {
   document.getElementById("print-monthly-name").textContent = s.name;
   document.getElementById("print-monthly-adm").textContent = s.admissionNumber;
   document.getElementById("print-monthly-pos").textContent = `Juz ${s.currentJuz || 1}`;
+  document.getElementById("print-monthly-achievements").textContent = (s.achievements || []).join(", ") || "None";
 
   const monthlyTbody = document.getElementById("print-monthly-table-body");
   monthlyTbody.innerHTML = "";

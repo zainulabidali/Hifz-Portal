@@ -23,6 +23,22 @@ import {
 // Helper for generating IDs in offline mode
 const generateId = () => Math.random().toString(36).substring(2, 11);
 
+// Database Retry Logic with Exponential Backoff
+async function withRetry(operation, maxRetries = 3, initialDelay = 800) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await operation();
+    } catch (error) {
+      attempt++;
+      if (attempt >= maxRetries) throw error;
+      const backoff = initialDelay * Math.pow(2, attempt - 1);
+      console.warn(`Database operation failed. Retrying in ${backoff}ms (Attempt ${attempt}/${maxRetries}). Error:`, error);
+      await new Promise(resolve => setTimeout(resolve, backoff));
+    }
+  }
+}
+
 // ==========================================
 // CLASS MANAGEMENT
 // ==========================================
@@ -41,9 +57,11 @@ export async function getClasses(madrasaId) {
     }
     return Object.values(classes);
   } else {
-    const colRef = collection(db, "madrasas", madrasaId, "classes");
-    const snapshot = await getDocs(colRef);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return withRetry(async () => {
+      const colRef = collection(db, "madrasas", madrasaId, "classes");
+      const snapshot = await getDocs(colRef);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    });
   }
 }
 
@@ -55,12 +73,14 @@ export async function addClass(madrasaId, name) {
     localStorage.setItem(`mock_classes_${madrasaId}`, JSON.stringify(classes));
     return classes[id];
   } else {
-    const colRef = collection(db, "madrasas", madrasaId, "classes");
-    const docRef = await addDoc(colRef, {
-      name,
-      createdAt: serverTimestamp()
+    return withRetry(async () => {
+      const colRef = collection(db, "madrasas", madrasaId, "classes");
+      const docRef = await addDoc(colRef, {
+        name,
+        createdAt: serverTimestamp()
+      });
+      return { id: docRef.id, name };
     });
-    return { id: docRef.id, name };
   }
 }
 
@@ -70,8 +90,10 @@ export async function deleteClass(madrasaId, classId) {
     delete classes[classId];
     localStorage.setItem(`mock_classes_${madrasaId}`, JSON.stringify(classes));
   } else {
-    const docRef = doc(db, "madrasas", madrasaId, "classes", classId);
-    await deleteDoc(docRef);
+    return withRetry(async () => {
+      const docRef = doc(db, "madrasas", madrasaId, "classes", classId);
+      await deleteDoc(docRef);
+    });
   }
 }
 
@@ -145,9 +167,11 @@ export async function getStudents(madrasaId) {
     }
     return Object.values(students);
   } else {
-    const colRef = collection(db, "madrasas", madrasaId, "students");
-    const snapshot = await getDocs(colRef);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return withRetry(async () => {
+      const colRef = collection(db, "madrasas", madrasaId, "students");
+      const snapshot = await getDocs(colRef);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    });
   }
 }
 
@@ -163,9 +187,11 @@ export async function addStudent(madrasaId, studentData) {
     localStorage.setItem(`mock_students_${madrasaId}`, JSON.stringify(students));
     return students[id];
   } else {
-    const colRef = collection(db, "madrasas", madrasaId, "students");
-    const docRef = await addDoc(colRef, fullData);
-    return { id: docRef.id, ...fullData };
+    return withRetry(async () => {
+      const colRef = collection(db, "madrasas", madrasaId, "students");
+      const docRef = await addDoc(colRef, fullData);
+      return { id: docRef.id, ...fullData };
+    });
   }
 }
 
@@ -183,8 +209,10 @@ export async function updateStudent(madrasaId, studentId, studentData) {
       return students[studentId];
     }
   } else {
-    const docRef = doc(db, "madrasas", madrasaId, "students", studentId);
-    await updateDoc(docRef, dataToUpdate);
+    return withRetry(async () => {
+      const docRef = doc(db, "madrasas", madrasaId, "students", studentId);
+      await updateDoc(docRef, dataToUpdate);
+    });
   }
 }
 
@@ -194,8 +222,10 @@ export async function deleteStudent(madrasaId, studentId) {
     delete students[studentId];
     localStorage.setItem(`mock_students_${madrasaId}`, JSON.stringify(students));
   } else {
-    const docRef = doc(db, "madrasas", madrasaId, "students", studentId);
-    await deleteDoc(docRef);
+    return withRetry(async () => {
+      const docRef = doc(db, "madrasas", madrasaId, "students", studentId);
+      await deleteDoc(docRef);
+    });
   }
 }
 
@@ -218,12 +248,14 @@ export async function uploadStudentPhoto(madrasaId, studentId, file) {
       reader.readAsDataURL(file);
     });
   } else {
-    const storageRef = ref(storage, `madrasas/${madrasaId}/students/${studentId}/${Date.now()}_${file.name}`);
-    const snapshot = await uploadBytes(storageRef, file);
-    const downloadUrl = await getDownloadURL(snapshot.ref);
-    // Update student doc
-    await updateStudent(madrasaId, studentId, { photoUrl: downloadUrl });
-    return downloadUrl;
+    return withRetry(async () => {
+      const storageRef = ref(storage, `madrasas/${madrasaId}/students/${studentId}/${Date.now()}_${file.name}`);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+      // Update student doc
+      await updateStudent(madrasaId, studentId, { photoUrl: downloadUrl });
+      return downloadUrl;
+    });
   }
 }
 
@@ -233,6 +265,24 @@ export async function uploadStudentPhoto(madrasaId, studentId, file) {
 export async function saveDailyReport(madrasaId, studentId, reportData) {
   const dateStr = reportData.date; // YYYY-MM-DD
   
+  // Update local reports cache for this student to keep it fresh
+  const cacheKey = `cache_reports_${madrasaId}_${studentId}`;
+  const cacheTimeKey = `cache_reports_time_${madrasaId}_${studentId}`;
+  const cachedData = localStorage.getItem(cacheKey);
+  if (cachedData) {
+    try {
+      let reports = JSON.parse(cachedData);
+      // Remove any existing entry for the same date to avoid duplicates
+      reports = reports.filter(r => r.date !== dateStr);
+      reports.push({ id: dateStr, ...reportData });
+      reports.sort((a, b) => b.date.localeCompare(a.date));
+      localStorage.setItem(cacheKey, JSON.stringify(reports));
+      localStorage.setItem(cacheTimeKey, Date.now().toString());
+    } catch (e) {
+      console.error("Failed to update student reports cache:", e);
+    }
+  }
+
   if (isOfflineMode) {
     const allReports = JSON.parse(localStorage.getItem(`mock_reports_${madrasaId}`)) || {};
     if (!allReports[studentId]) allReports[studentId] = {};
@@ -253,41 +303,61 @@ export async function saveDailyReport(madrasaId, studentId, reportData) {
     }
     return reportData;
   } else {
-    // Write Report document with ID as YYYY-MM-DD to enforce single report per day
-    const reportRef = doc(db, "madrasas", madrasaId, "students", studentId, "reports", dateStr);
-    await setDoc(reportRef, reportData);
+    return withRetry(async () => {
+      // Write Report document with ID as YYYY-MM-DD to enforce single report per day
+      const reportRef = doc(db, "madrasas", madrasaId, "students", studentId, "reports", dateStr);
+      await setDoc(reportRef, reportData);
 
-    // Update student current position in transaction/batch (or updateDoc)
-    if (reportData.attendance !== "absent") {
-      const updateData = {};
-      if (reportData.newLesson && reportData.newLesson.pageNumber) {
-        updateData.currentPage = parseInt(reportData.newLesson.pageNumber);
-        updateData.currentSurah = reportData.newLesson.surah;
+      // Update student current position in transaction/batch (or updateDoc)
+      if (reportData.attendance !== "absent") {
+        const updateData = {};
+        if (reportData.newLesson && reportData.newLesson.pageNumber) {
+          updateData.currentPage = parseInt(reportData.newLesson.pageNumber);
+          updateData.currentSurah = reportData.newLesson.surah;
+        }
+        if (reportData.dawrah && reportData.dawrah.juzNumber) {
+          updateData.currentJuz = parseInt(reportData.dawrah.juzNumber);
+        }
+        
+        if (Object.keys(updateData).length > 0) {
+          const studentRef = doc(db, "madrasas", madrasaId, "students", studentId);
+          await updateDoc(studentRef, updateData);
+        }
       }
-      if (reportData.dawrah && reportData.dawrah.juzNumber) {
-        updateData.currentJuz = parseInt(reportData.dawrah.juzNumber);
-      }
-      
-      if (Object.keys(updateData).length > 0) {
-        const studentRef = doc(db, "madrasas", madrasaId, "students", studentId);
-        await updateDoc(studentRef, updateData);
-      }
-    }
+    });
   }
 }
 
-export async function getStudentReports(madrasaId, studentId) {
+export async function getStudentReports(madrasaId, studentId, force = false) {
   if (isOfflineMode) {
     const allReports = JSON.parse(localStorage.getItem(`mock_reports_${madrasaId}`)) || {};
     const reportsMap = allReports[studentId] || {};
     return Object.values(reportsMap).sort((a, b) => b.date.localeCompare(a.date));
   } else {
-    const colRef = collection(db, "madrasas", madrasaId, "students", studentId, "reports");
-    const q = query(colRef, limit(50));
-    const snapshot = await getDocs(q);
-    return snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .sort((a, b) => b.date.localeCompare(a.date));
+    const cacheKey = `cache_reports_${madrasaId}_${studentId}`;
+    const cacheTimeKey = `cache_reports_time_${madrasaId}_${studentId}`;
+    const cachedData = localStorage.getItem(cacheKey);
+    const cachedTime = localStorage.getItem(cacheTimeKey);
+    const now = Date.now();
+
+    // If not forced and cache is less than 30 seconds old, use cache
+    if (!force && cachedData && cachedTime && (now - parseInt(cachedTime) < 30000)) {
+      console.log(`Using cached student reports for ${studentId}`);
+      return JSON.parse(cachedData);
+    }
+
+    return withRetry(async () => {
+      const colRef = collection(db, "madrasas", madrasaId, "students", studentId, "reports");
+      const q = query(colRef, limit(50));
+      const snapshot = await getDocs(q);
+      const reports = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => b.date.localeCompare(a.date));
+      
+      localStorage.setItem(cacheKey, JSON.stringify(reports));
+      localStorage.setItem(cacheTimeKey, now.toString());
+      return reports;
+    });
   }
 }
 
@@ -303,25 +373,24 @@ export async function getTodayReports(madrasaId, dateStr) {
     });
     return todayReports;
   } else {
-    // Fetch reports across all students for a specific date using a batch read or collection queries
-    // Since firestore doesn't support subcollection queries easily without a collectionGroup, 
-    // we can either fetch all students, then fetch today's report. 
-    // To minimize reads: parents and admins can query the collection group 'reports' where date === dateStr
-    const colGroupRef = collectionGroup(db, "reports");
-    const q = query(colGroupRef, where("date", "==", dateStr));
-    const snapshot = await getDocs(q);
-    
-    const todayReports = {};
-    snapshot.docs.forEach(doc => {
-      // Ensure it belongs to this madrasa
-      if (doc.ref.path.includes(`madrasas/${madrasaId}/`)) {
-        // Path matches madrasas/madrasaId/students/studentId/reports/date
-        const parts = doc.ref.path.split("/");
-        const studentId = parts[3];
-        todayReports[studentId] = doc.data();
-      }
+    return withRetry(async () => {
+      // Single Firestore query retrieving today's reports for ALL students across the collection group
+      const reportsQuery = query(
+        collectionGroup(db, "reports"),
+        where("date", "==", dateStr)
+      );
+      const snapshot = await getDocs(reportsQuery);
+      const todayReports = {};
+      snapshot.docs.forEach(doc => {
+        // Path format is: madrasas/{madrasaId}/students/{studentId}/reports/{dateStr}
+        const pathParts = doc.ref.path.split("/");
+        if (pathParts[1] === madrasaId) {
+          const studentId = pathParts[3];
+          todayReports[studentId] = doc.data();
+        }
+      });
+      return todayReports;
     });
-    return todayReports;
   }
 }
 
@@ -349,36 +418,38 @@ export async function searchStudentForParent(admissionNumber, parentPhoneLast4) 
     }
     throw new Error("No student found with the matching Admission Number and parent phone combination.");
   } else {
-    // Use Firestore Collection Group query to search for the student globally
-    const groupRef = collectionGroup(db, "students");
-    const q = query(
-      groupRef, 
-      where("admissionNumber", "==", admissionNumber), 
-      where("parentPhoneLast4", "==", parentPhoneLast4),
-      limit(1)
-    );
-    
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) {
-      throw new Error("No student found with the matching Admission Number and parent phone combination.");
-    }
-    
-    const studentDoc = snapshot.docs[0];
-    const studentData = studentDoc.data();
-    
-    // Extract madrasaId from student doc path: madrasas/{madrasaId}/students/{studentId}
-    const pathParts = studentDoc.ref.path.split("/");
-    const madrasaId = pathParts[1];
-    
-    // Fetch madrasa details
-    const madrasaDoc = await getDoc(doc(db, "madrasas", madrasaId));
-    const madrasaName = madrasaDoc.exists() ? madrasaDoc.data().name : "Hifz Madrasa";
-    
-    return {
-      student: { id: studentDoc.id, ...studentData },
-      madrasaId,
-      madrasaName
-    };
+    return withRetry(async () => {
+      // Use Firestore Collection Group query to search for the student globally
+      const groupRef = collectionGroup(db, "students");
+      const q = query(
+        groupRef, 
+        where("admissionNumber", "==", admissionNumber), 
+        where("parentPhoneLast4", "==", parentPhoneLast4),
+        limit(1)
+      );
+      
+      const snapshot = await getDocs(q);
+      if (snapshot.empty) {
+        throw new Error("No student found with the matching Admission Number and parent phone combination.");
+      }
+      
+      const studentDoc = snapshot.docs[0];
+      const studentData = studentDoc.data();
+      
+      // Extract madrasaId from student doc path: madrasas/{madrasaId}/students/{studentId}
+      const pathParts = studentDoc.ref.path.split("/");
+      const madrasaId = pathParts[1];
+      
+      // Fetch madrasa details
+      const madrasaDoc = await getDoc(doc(db, "madrasas", madrasaId));
+      const madrasaName = madrasaDoc.exists() ? madrasaDoc.data().name : "Hifz Madrasa";
+      
+      return {
+        student: { id: studentDoc.id, ...studentData },
+        madrasaId,
+        madrasaName
+      };
+    });
   }
 }
 

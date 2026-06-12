@@ -20,9 +20,7 @@ service cloud.firestore {
     }
 
     function isMadrasaAdmin(madrasaId) {
-      return isAuthenticated() && userExists() && 
-        getUserData().role == 'madrasa_admin' && 
-        getUserData().madrasaId == madrasaId;
+      return isAuthenticated() && request.auth.uid == madrasaId;
     }
 
     // Rules for User profiles

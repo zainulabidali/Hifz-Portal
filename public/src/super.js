@@ -1,5 +1,6 @@
 import { checkAuthState, logoutUser } from "./auth.js";
 import { isOfflineMode, db } from "../firebase-config.js";
+import { showConfirm, showDeleteConfirm, showToast } from "./ui-notifications.js";
 import { 
   collection, 
   doc, 
@@ -98,20 +99,20 @@ async function loadPlatformData() {
 }
 
 function showAlert(message, type = "success") {
-  const container = document.getElementById("alertContainer");
-  const alertEl = document.createElement("div");
-  alertEl.className = `alert alert-${type} alert-dismissible fade show shadow-md rounded-pill px-4 py-2 border-0`;
-  alertEl.innerHTML = `
-    <span class="small"><i class="bi bi-shield-check me-2"></i>${message}</span>
-    <button type="button" class="btn-close py-2" data-bs-alert="close" aria-label="Close" onclick="this.parentElement.remove()"></button>
-  `;
-  container.appendChild(alertEl);
-  setTimeout(() => alertEl.remove(), 4000);
+  showToast(message, type);
 }
 
 function setupEventListeners() {
-  document.getElementById("logoutBtn").addEventListener("click", async () => {
-    await logoutUser();
+  document.getElementById("logoutBtn").addEventListener("click", () => {
+    showConfirm({
+      title: "Sign Out",
+      message: "Are you sure you want to sign out?",
+      type: "warning",
+      confirmText: "Sign Out",
+      onConfirm: async () => {
+        await logoutUser();
+      }
+    });
   });
 
   document.getElementById("madrasaSearch").addEventListener("input", filterMadrasas);
@@ -335,35 +336,37 @@ window.renewSubscriptionAction = async function(madrasaId) {
   }
 };
 
-window.deleteMadrasa = async function(madrasaId, name) {
-  if (!confirm(`CAUTION: Are you sure you want to delete the Madrasa "${name}" and all associated records? This cannot be undone.`)) {
-    return;
-  }
+window.deleteMadrasa = function(madrasaId, name) {
+  showDeleteConfirm(
+    `CAUTION: Are you sure you want to delete the Madrasa "${name}" and all associated records? This cannot be undone.`,
+    `Delete Madrasa`,
+    async () => {
+      try {
+        if (isOfflineMode) {
+          const mock = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
+          delete mock[madrasaId];
+          localStorage.setItem("mock_madrasas", JSON.stringify(mock));
+          
+          // Also clean up mock students and classes
+          localStorage.removeItem(`mock_students_${madrasaId}`);
+          localStorage.removeItem(`mock_classes_${madrasaId}`);
+          localStorage.removeItem(`mock_reports_${madrasaId}`);
+        } else {
+          // In live Firebase: Delete main madrasa doc. 
+          // Note: Subcollections need to be deleted manually or using admin tools. 
+          // To satisfy simple sandbox delete:
+          await deleteDoc(doc(db, "madrasas", madrasaId));
+          await deleteDoc(doc(db, "users", madrasaId));
+        }
 
-  try {
-    if (isOfflineMode) {
-      const mock = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
-      delete mock[madrasaId];
-      localStorage.setItem("mock_madrasas", JSON.stringify(mock));
-      
-      // Also clean up mock students and classes
-      localStorage.removeItem(`mock_students_${madrasaId}`);
-      localStorage.removeItem(`mock_classes_${madrasaId}`);
-      localStorage.removeItem(`mock_reports_${madrasaId}`);
-    } else {
-      // In live Firebase: Delete main madrasa doc. 
-      // Note: Subcollections need to be deleted manually or using admin tools. 
-      // To satisfy simple sandbox delete:
-      await deleteDoc(doc(db, "madrasas", madrasaId));
-      await deleteDoc(doc(db, "users", madrasaId));
+        showAlert(`Madrasa "${name}" deleted.`);
+        await loadPlatformData();
+        renderSuperDashboard();
+      } catch (e) {
+        showAlert("Error deleting record.", "danger");
+      }
     }
-
-    showAlert(`Madrasa "${name}" deleted.`);
-    await loadPlatformData();
-    renderSuperDashboard();
-  } catch (e) {
-    showAlert("Error deleting record.", "danger");
-  }
+  );
 };
 
 // Custom Expiry Modal helpers

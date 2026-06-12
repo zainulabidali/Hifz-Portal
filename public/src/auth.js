@@ -12,8 +12,16 @@ import {
   serverTimestamp 
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
+// Helper to resolve the relative base path dynamically (e.g. "/public/" or "/")
+function getBasePath() {
+  const path = window.location.pathname;
+  const lastSlashIndex = path.lastIndexOf('/');
+  return lastSlashIndex !== -1 ? path.substring(0, lastSlashIndex + 1) : "/";
+}
+
 // Check authentication state and redirect appropriately
 export function checkAuthState(requiredRole = "madrasa_admin", onStatusChecked) {
+  const basePath = getBasePath();
   if (isOfflineMode) {
     const user = JSON.parse(localStorage.getItem("mock_current_user"));
     if (!user) {
@@ -24,7 +32,7 @@ export function checkAuthState(requiredRole = "madrasa_admin", onStatusChecked) 
     // Check if it's the super admin
     if (user.role === "super_admin") {
       if (requiredRole !== "super_admin") {
-        window.location.href = "super-admin.html";
+        window.location.href = basePath + "super-admin.html";
       } else if (onStatusChecked) {
         onStatusChecked(user, { status: "active" });
       }
@@ -36,7 +44,7 @@ export function checkAuthState(requiredRole = "madrasa_admin", onStatusChecked) 
     const madrasa = madrasas[user.madrasaId] || { name: "Mock Madrasa", location: "Local", status: "pending" };
     
     if (requiredRole === "super_admin" && user.role !== "super_admin") {
-      window.location.href = "login.html";
+      window.location.href = basePath + "login.html";
       return;
     }
 
@@ -63,7 +71,7 @@ export function checkAuthState(requiredRole = "madrasa_admin", onStatusChecked) 
         
         if (userData.role === "super_admin") {
           if (requiredRole !== "super_admin") {
-            window.location.href = "super-admin.html";
+            window.location.href = basePath + "super-admin.html";
           } else if (onStatusChecked) {
             onStatusChecked(firebaseUser, { status: "active" });
           }
@@ -71,7 +79,7 @@ export function checkAuthState(requiredRole = "madrasa_admin", onStatusChecked) 
         }
 
         if (requiredRole === "super_admin" && userData.role !== "super_admin") {
-          window.location.href = "login.html";
+          window.location.href = basePath + "login.html";
           return;
         }
 
@@ -91,13 +99,24 @@ export function checkAuthState(requiredRole = "madrasa_admin", onStatusChecked) 
 
 function handleStatusRouting(user, madrasa, callback) {
   const currentPath = window.location.pathname;
+  const basePath = getBasePath();
   
   if (madrasa.status === "pending" && !currentPath.includes("payment.html")) {
-    window.location.href = "payment.html";
-  } else if (madrasa.status === "active" && (currentPath.includes("payment.html") || currentPath.includes("login.html") || currentPath.includes("signup.html") || currentPath.includes("index.html"))) {
-    window.location.href = "dashboard.html";
+    window.location.href = basePath + "payment.html";
+  } else if (madrasa.status === "active" && (
+    currentPath.includes("payment.html") || 
+    currentPath.includes("login.html") || 
+    currentPath.includes("signup.html") || 
+    currentPath.includes("index.html") ||
+    currentPath.endsWith("payment") ||
+    currentPath.endsWith("login") ||
+    currentPath.endsWith("signup") ||
+    currentPath.endsWith("index") ||
+    currentPath.endsWith("/")
+  )) {
+    window.location.href = basePath + "dashboard.html";
   } else if ((madrasa.status === "suspended" || madrasa.status === "expired") && !currentPath.includes("payment.html")) {
-    window.location.href = "payment.html?status=" + madrasa.status;
+    window.location.href = basePath + "payment.html?status=" + madrasa.status;
   } else {
     if (callback) callback(user, madrasa);
   }
@@ -105,8 +124,14 @@ function handleStatusRouting(user, madrasa, callback) {
 
 function redirectToLogin() {
   const currentPath = window.location.pathname;
-  if (!currentPath.includes("login.html") && !currentPath.includes("signup.html") && !currentPath.includes("parent-portal.html")) {
-    window.location.href = "login.html";
+  const isAuthOrPortal = 
+    currentPath.includes("login.html") || 
+    currentPath.includes("signup.html") || 
+    currentPath.includes("parent-portal.html") ||
+    currentPath.endsWith("parent-portal"); // clean urls
+  
+  if (!isAuthOrPortal) {
+    window.location.href = getBasePath() + "login.html";
   }
 }
 
@@ -246,11 +271,12 @@ export async function loginUser(email, password) {
 
 // User logout
 export async function logoutUser() {
+  const basePath = getBasePath();
   if (isOfflineMode) {
     localStorage.removeItem("mock_current_user");
-    window.location.href = "login.html";
+    window.location.href = basePath + "login.html";
   } else {
     await firebaseSignOut(auth);
-    window.location.href = "login.html";
+    window.location.href = basePath + "login.html";
   }
 }

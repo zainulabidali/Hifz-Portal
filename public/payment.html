@@ -64,6 +64,7 @@
   <script type="module">
     import { checkAuthState, logoutUser } from "./src/auth.js";
     import { isOfflineMode } from "./firebase-config.js";
+    import { showConfirm, showToast } from "./src/ui-notifications.js";
 
     const statusIconContainer = document.querySelector("#statusIconContainer");
     const statusIcon = document.querySelector("#statusIcon");
@@ -108,7 +109,7 @@
     checkStatusBtn.addEventListener("click", () => {
       // Offline mode instant activation helper for demoing
       if (isOfflineMode && currentMadrasa) {
-        alert("Offline mode detected. Activating this account locally to proceed to the Dashboard!");
+        showToast("Offline mode detected. Activating this account locally to proceed to the Dashboard!", "info");
         const mockMadrasas = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
         const user = JSON.parse(localStorage.getItem("mock_current_user"));
         
@@ -120,10 +121,16 @@
       window.location.href = "index.html";
     });
 
-    logoutBtn.addEventListener("click", async () => {
-      if (confirm("Are you sure you want to log out?")) {
-        await logoutUser();
-      }
+    logoutBtn.addEventListener("click", () => {
+      showConfirm({
+        title: "Log Out",
+        message: "Are you sure you want to log out?",
+        type: "warning",
+        confirmText: "Log Out",
+        onConfirm: async () => {
+          await logoutUser();
+        }
+      });
     });
   </script>
 </body>

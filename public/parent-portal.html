@@ -155,17 +155,26 @@
 
   <main class="parent-container">
 
-    <!-- ==========================================
-         PANEL 0: GATEWAY ERROR SCREEN (MISSING ID)
-         ========================================== -->
+    <!-- Initial Loading Panel -->
+    <div id="parent-loading-panel" class="d-none no-print my-5">
+      <div class="glass-card p-5 text-center">
+        <div class="d-inline-flex align-items-center justify-content-center bg-success-subtle text-success rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <div class="spinner-border text-success" style="width: 2.5rem; height: 2.5rem;" role="status"></div>
+        </div>
+        <h4 class="fw-bold text-success mb-3" id="parent-loading-title">Connecting to Portal...</h4>
+        <p class="text-muted small mb-0" id="parent-loading-message">Verifying database connections and gathering reports.</p>
+      </div>
+    </div>
+
+    <!-- Error Gateway Panel -->
     <div id="parent-error-panel" class="d-none no-print my-5">
       <div class="glass-card p-5 text-center">
-        <div class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
-          <i class="bi bi-link-45deg fs-1"></i>
+        <div id="parent-error-icon-container" class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <i id="parent-error-icon" class="bi bi-link-45deg fs-1"></i>
         </div>
-        <h4 class="fw-bold text-danger mb-3">Invalid Portal Link</h4>
-        <p class="text-muted small mb-4">You have opened the Parent Portal without a designated Madrasa ID parameter. Each Madrasa owns a secure individual portal.</p>
-        <div class="glass-card bg-light border-0 p-3 small text-start">
+        <h4 class="fw-bold text-danger mb-3" id="parent-error-title">Invalid Portal Link</h4>
+        <p class="text-muted small mb-4" id="parent-error-message">You have opened the Parent Portal without a designated Madrasa ID parameter. Each Madrasa owns a secure individual portal.</p>
+        <div id="parent-error-instructions" class="glass-card bg-light border-0 p-3 small text-start">
           <strong>How to access your portal:</strong>
           <ol class="mb-0 mt-2 ps-3">
             <li>Contact your Madrasa Admin or Head Usthad.</li>
@@ -181,17 +190,32 @@
          ========================================== -->
     <div id="parent-search-panel" class="d-block no-print">
       
-      <!-- Brand Logo Header -->
-      <div class="text-center my-4">
-        <div class="d-inline-flex align-items-center justify-content-center bg-success-subtle text-success rounded-circle p-3 mb-2" style="width: 64px; height: 64px;">
-          <i class="bi bi-person-heart fs-2"></i>
+      <!-- Premium Hero Banner Header -->
+      <div class="glass-card p-0 overflow-hidden mb-4 border-0 shadow-lg" style="border-radius: var(--radius-md);">
+        <div id="portalBrandingHero" class="p-4 text-white d-flex flex-column justify-content-end position-relative" style="background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('assets/madrasa_banner.png') center/cover no-repeat; min-height: 200px;">
+          <!-- Subtle decorative overlay pattern -->
+          <div class="position-absolute top-0 end-0 p-3 opacity-10">
+            <i class="bi bi-book-half" style="font-size: 140px; line-height: 1;"></i>
+          </div>
+          <div class="d-flex align-items-center gap-3 z-1">
+            <div class="bg-white rounded-circle p-1 d-flex align-items-center justify-content-center shadow" style="width: 70px; height: 70px; flex-shrink: 0; overflow: hidden;">
+              <img id="portalBrandingLogo" src="assets/madrasa_logo.png" alt="Madrasa Logo" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">
+            </div>
+            <div class="min-w-0">
+              <span class="badge text-white rounded-pill px-2 py-1 mb-1 small fw-bold" style="font-size: 10px; background: rgba(16, 185, 129, 0.85);">PARENT ACCESS PORTAL</span>
+              <h3 class="fw-bold mb-0 text-truncate" id="portalBrandingTitle">Darul Quran Academy</h3>
+              <p class="mb-0 small opacity-90"><i class="bi bi-geo-alt-fill me-1"></i><span id="portalBrandingLocation">Kerala, India</span></p>
+            </div>
+          </div>
         </div>
-        <h3 class="fw-bold mb-1 text-gradient" id="portalBrandingTitle">Hifz Parent Portal</h3>
-        <p class="text-muted small" id="portalBrandingSubtitle">Monitor your child's Quran memorization progress</p>
+        <div class="p-3 bg-light border-top border-light-subtle d-flex flex-wrap justify-content-between align-items-center gap-2 small text-muted">
+          <div><i class="bi bi-telephone-fill text-success me-1"></i><span id="portalBrandingContact">+919207846064</span></div>
+          <div><i class="bi bi-envelope-fill text-success me-1"></i><span id="portalBrandingEmail">usthad@madrasa.com</span></div>
+        </div>
       </div>
 
       <!-- Real-time Search Box -->
-      <div class="glass-card p-4 mb-4">
+      <div class="glass-card p-4 mb-3">
         <label for="parentSearchInput" class="form-label small fw-semibold text-secondary mb-2">Search Student</label>
         <div class="position-relative">
           <div class="input-group">
@@ -200,6 +224,28 @@
           </div>
         </div>
         <div id="searchMessage" class="alert alert-danger d-none mt-3 py-2 small" role="alert"></div>
+      </div>
+
+      <!-- Madrasa Quick Statistics (Visible by default) -->
+      <div id="madrasaStatsRow" class="row g-2 mb-4 no-print">
+        <div class="col-4">
+          <div class="glass-card text-center p-2 mb-0" style="border-radius: var(--radius-sm);">
+            <strong class="d-block text-success fs-5" id="statsStudentCount">0</strong>
+            <span class="text-muted" style="font-size: 9px;">Active Students</span>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="glass-card text-center p-2 mb-0" style="border-radius: var(--radius-sm);">
+            <strong class="d-block text-primary fs-5" id="statsClassCount">0</strong>
+            <span class="text-muted" style="font-size: 9px;">Class Sections</span>
+          </div>
+        </div>
+        <div class="col-4">
+          <div class="glass-card text-center p-2 mb-0" style="border-radius: var(--radius-sm);">
+            <strong class="d-block text-warning fs-5" id="statsLeaderboardRank">#1</strong>
+            <span class="text-muted" style="font-size: 9px;">Quran SaaS Elite</span>
+          </div>
+        </div>
       </div>
 
       <!-- Search Results Grid (Visible on typing) -->
@@ -653,6 +699,7 @@
             <td><strong>Student:</strong> <span id="print-monthly-name">Zaid Yusuf</span></td>
             <td><strong>Adm No:</strong> <span id="print-monthly-adm">1001</span></td>
             <td><strong>Position:</strong> <span id="print-monthly-pos">Juz 12</span></td>
+            <td><strong>Achievements:</strong> <span id="print-monthly-achievements">—</span></td>
           </tr>
         </table>
 

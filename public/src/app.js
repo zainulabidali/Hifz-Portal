@@ -1,5 +1,6 @@
 import { checkAuthState, logoutUser } from "./auth.js";
-import { isOfflineMode } from "../firebase-config.js";
+import { isOfflineMode, auth } from "../firebase-config.js";
+import { showConfirm, showDeleteConfirm, showToast, showLoading, hideLoading } from "./ui-notifications.js";
 import { 
   getClasses, 
   addClass, 
@@ -13,6 +14,15 @@ import {
   getStudentReports, 
   getTodayReports 
 } from "./db.js";
+
+// Helper to resolve the active Madrasa ID for online/offline modes
+const getMadrasaId = () => {
+  if (isOfflineMode) {
+    return currentUser?.madrasaId || "madrasa_active_123";
+  } else {
+    return auth.currentUser?.uid || currentUser?.madrasaId;
+  }
+};
 
 // State Management
 let currentUser = null;
@@ -80,16 +90,83 @@ document.addEventListener("DOMContentLoaded", () => {
   setupEventListeners();
 });
 
-async function loadDatabaseData() {
+function triggerUIRender(tabId) {
+  if (tabId === "dashboard") {
+    renderDashboardView();
+  } else if (tabId === "classes") {
+    renderClassesView();
+  } else if (tabId === "students") {
+    renderStudentsView();
+  } else if (tabId === "daily") {
+    renderDailyView();
+  } else if (tabId === "reports") {
+    renderReportsConfig();
+  }
+}
+
+let lastSyncTime = 0;
+const CACHE_TTL_MS = 30000; // 30 seconds Cache TTL
+
+async function loadDatabaseData(force = false) {
   if (!currentUser) return;
-  const madrasaId = currentUser.madrasaId;
+  const madrasaId = getMadrasaId();
+  if (!madrasaId) return;
+
+  // Try to load from Local Storage cache first to show UI instantly
+  const cacheKeyClasses = `cache_classes_${madrasaId}`;
+  const cacheKeyStudents = `cache_students_${madrasaId}`;
+  const cacheKeyReports = `cache_today_reports_${madrasaId}`;
+
+  const cachedClasses = localStorage.getItem(cacheKeyClasses);
+  const cachedStudents = localStorage.getItem(cacheKeyStudents);
+  const cachedReports = localStorage.getItem(cacheKeyReports);
+
+  if (cachedClasses && cachedStudents) {
+    classes = JSON.parse(cachedClasses);
+    students = JSON.parse(cachedStudents);
+    if (cachedReports) {
+      todayReports = JSON.parse(cachedReports);
+    }
+    // Update active view instantly
+    triggerUIRender(currentTab);
+  }
+
+  // Skip background sync if the cache is still fresh, unless 'force' is requested
+  const now = Date.now();
+  if (!force && (now - lastSyncTime < CACHE_TTL_MS)) {
+    console.log("Using fresh cached data for background sync bypass");
+    return;
+  }
+
+  // Fetch fresh data from Firestore in the background to update cache
   try {
-    classes = await getClasses(madrasaId);
-    students = await getStudents(madrasaId);
-    todayReports = await getTodayReports(madrasaId, getTodayDateString());
+    const freshClasses = await getClasses(madrasaId);
+    const freshStudents = await getStudents(madrasaId);
+    const freshReports = await getTodayReports(madrasaId, getTodayDateString());
+
+    const classesChanged = JSON.stringify(freshClasses) !== JSON.stringify(classes);
+    const studentsChanged = JSON.stringify(freshStudents) !== JSON.stringify(students);
+    const reportsChanged = JSON.stringify(freshReports) !== JSON.stringify(todayReports);
+
+    classes = freshClasses;
+    students = freshStudents;
+    todayReports = freshReports;
+
+    localStorage.setItem(cacheKeyClasses, JSON.stringify(freshClasses));
+    localStorage.setItem(cacheKeyStudents, JSON.stringify(freshStudents));
+    localStorage.setItem(cacheKeyReports, JSON.stringify(freshReports));
+
+    lastSyncTime = Date.now(); // update successful sync timestamp
+
+    if (classesChanged || studentsChanged || reportsChanged) {
+      triggerUIRender(currentTab);
+    }
   } catch (error) {
-    console.error("Error loading data:", error);
-    showAlert("Failed to load records from database.", "danger");
+    console.error("Error background sync:", error);
+    // Only alert if we don't have any cached data to display
+    if (classes.length === 0) {
+      showAlert("Failed to load records from database.", "danger");
+    }
   }
 }
 
@@ -97,16 +174,7 @@ async function loadDatabaseData() {
 // ALERT UTILITY
 // ==========================================
 function showAlert(message, type = "success") {
-  const container = document.getElementById("alertContainer");
-  const alertEl = document.createElement("div");
-  alertEl.className = `alert alert-${type} alert-dismissible fade show shadow-md rounded-pill px-4 py-2 border-0`;
-  alertEl.setAttribute("role", "alert");
-  alertEl.innerHTML = `
-    <span class="small"><i class="bi ${type === 'success' ? 'bi-check-circle-fill text-success' : 'bi-exclamation-triangle-fill text-danger'} me-2"></i>${message}</span>
-    <button type="button" class="btn-close py-2" data-bs-dismiss="alert" aria-label="Close"></button>
-  `;
-  container.appendChild(alertEl);
-  setTimeout(() => alertEl.remove(), 4000);
+  showToast(message, type);
 }
 
 // ==========================================
@@ -114,10 +182,16 @@ function showAlert(message, type = "success") {
 // ==========================================
 function setupEventListeners() {
   // Handle logouts
-  document.getElementById("logoutBtn").addEventListener("click", async () => {
-    if (confirm("Are you sure you want to sign out?")) {
-      await logoutUser();
-    }
+  document.getElementById("logoutBtn").addEventListener("click", () => {
+    showConfirm({
+      title: "Sign Out",
+      message: "Are you sure you want to sign out?",
+      type: "warning",
+      confirmText: "Sign Out",
+      onConfirm: async () => {
+        await logoutUser();
+      }
+    });
   });
 
   // Inline Switch tab listening
@@ -125,16 +199,35 @@ function setupEventListeners() {
     switchTab(e.detail);
   });
 
+  // Parent Portal URL builder to handle subdirectories (localhost) and clean URLs (production)
+  const getPortalUrl = (madrasaId) => {
+    const origin = window.location.origin;
+    const path = window.location.pathname;
+    
+    let basePath = "/";
+    const lastSlashIndex = path.lastIndexOf('/');
+    if (lastSlashIndex !== -1) {
+      basePath = path.substring(0, lastSlashIndex + 1);
+    }
+    
+    const isHtml = path.endsWith(".html") || path.includes(".html");
+    const filename = isHtml ? "parent-portal.html" : "parent-portal";
+    
+    return `${origin}${basePath}${filename}?madrasaId=${madrasaId}`;
+  };
+
   // Parent Portal Quick Actions
   document.getElementById("openParentPortalBtn").addEventListener("click", () => {
-    if (!currentUser) return;
-    const portalUrl = `${window.location.origin}/parent-portal.html?madrasaId=${currentUser.madrasaId}`;
+    const madrasaId = getMadrasaId();
+    if (!madrasaId) return;
+    const portalUrl = getPortalUrl(madrasaId);
     window.open(portalUrl, "_blank");
   });
 
   document.getElementById("copyParentPortalBtn").addEventListener("click", () => {
-    if (!currentUser) return;
-    const portalUrl = `${window.location.origin}/parent-portal.html?madrasaId=${currentUser.madrasaId}`;
+    const madrasaId = getMadrasaId();
+    if (!madrasaId) return;
+    const portalUrl = getPortalUrl(madrasaId);
     navigator.clipboard.writeText(portalUrl)
       .then(() => showAlert("Parent Portal link copied to clipboard!"))
       .catch(err => {
@@ -144,8 +237,9 @@ function setupEventListeners() {
   });
 
   document.getElementById("shareParentPortalBtn").addEventListener("click", () => {
-    if (!currentUser) return;
-    const portalUrl = `${window.location.origin}/parent-portal.html?madrasaId=${currentUser.madrasaId}`;
+    const madrasaId = getMadrasaId();
+    if (!madrasaId) return;
+    const portalUrl = getPortalUrl(madrasaId);
     if (navigator.share) {
       navigator.share({
         title: `${currentMadrasa?.name || "Hifz Progress Portal"} - Parent Portal`,
@@ -336,30 +430,52 @@ async function handleAddClass(e) {
   const name = nameInput.value.trim();
   if (!name) return;
 
+  const madrasaId = getMadrasaId();
+  const tempId = "class_temp_" + Date.now();
+  const newClassObj = { id: tempId, name, createdAt: new Date().toISOString() };
+  
+  // Save original state for potential rollback
+  const originalClasses = [...classes];
+  
+  // Optimistic Update
+  classes.push(newClassObj);
+  localStorage.setItem(`cache_classes_${madrasaId}`, JSON.stringify(classes));
+  renderClassesView();
+  
+  nameInput.value = "";
+  addClassModalObj.hide();
+  showAlert(`Class "${name}" created successfully.`);
+
   try {
-    await addClass(currentUser.madrasaId, name);
-    nameInput.value = "";
-    addClassModalObj.hide();
-    showAlert(`Class "${name}" created successfully.`);
-    await loadDatabaseData();
-    renderClassesView();
+    const saved = await addClass(madrasaId, name);
+    // Replace temp ID with actual ID from Firestore
+    classes = classes.map(c => c.id === tempId ? { ...c, id: saved.id } : c);
+    localStorage.setItem(`cache_classes_${madrasaId}`, JSON.stringify(classes));
   } catch (error) {
-    showAlert("Error creating class.", "danger");
+    console.error("Error creating class:", error);
+    // Rollback on failure
+    classes = originalClasses;
+    localStorage.setItem(`cache_classes_${madrasaId}`, JSON.stringify(classes));
+    renderClassesView();
+    showAlert("Error creating class on server. Rolled back.", "danger");
   }
 }
 
-window.handleClassDelete = async function(classId, name) {
-  if (!confirm(`Are you sure you want to delete the class "${name}"? All associated student mappings will remain but the class context will be removed.`)) {
-    return;
-  }
-  try {
-    await deleteClass(currentUser.madrasaId, classId);
-    showAlert(`Class "${name}" deleted.`);
-    await loadDatabaseData();
-    renderClassesView();
-  } catch (error) {
-    showAlert("Error deleting class.", "danger");
-  }
+window.handleClassDelete = function(classId, name) {
+  showDeleteConfirm(
+    `Are you sure you want to delete the class "${name}"? All associated student mappings will remain but the class context will be removed.`,
+    `Delete Class`,
+    async () => {
+      try {
+        await deleteClass(getMadrasaId(), classId);
+        showAlert(`Class "${name}" deleted.`);
+        await loadDatabaseData(true);
+        renderClassesView();
+      } catch (error) {
+        showAlert("Error deleting class.", "danger");
+      }
+    }
+  );
 };
 
 // ==========================================
@@ -430,17 +546,6 @@ function renderStudentsView() {
           </div>
         </div>
 
-        <!-- Achievements Badges -->
-        <div class="mt-2 text-wrap">
-          ${(student.achievements || []).map(b => {
-            let badgeClass = "badge-excellent";
-            if (b === "Perfect Attendance") badgeClass = "badge-attendance";
-            else if (b === "Continuous Sabak") badgeClass = "badge-streak";
-            else if (b === "Juz Completion") badgeClass = "badge-juz";
-            else if (b === "Monthly Star Student") badgeClass = "badge-star";
-            return `<span class="achievement-badge ${badgeClass}">${b}</span>`;
-          }).join('')}
-        </div>
       </div>
     `;
     container.appendChild(col);
@@ -557,52 +662,80 @@ async function handleStudentSave(e) {
   const submitBtn = document.getElementById("studentSubmitBtn");
   submitBtn.disabled = true;
 
+  const madrasaId = getMadrasaId();
+  const originalStudents = [...students];
+
+  // Optimistic update
+  let tempStudentId = studentId || "student_temp_" + Date.now();
+  const optimisticStudent = { id: tempStudentId, ...studentData };
+  
+  if (studentId) {
+    students = students.map(s => s.id === studentId ? { ...s, ...studentData } : s);
+  } else {
+    students.push(optimisticStudent);
+  }
+  
+  localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+  renderStudentsView();
+  addStudentModalObj.hide();
+  showAlert(studentId ? `Student details for "${name}" updated.` : `Student "${name}" added successfully.`);
+
   try {
     let savedStudent = null;
-    const madrasaId = currentUser.madrasaId;
-
     if (studentId) {
-      // Edit mode
       await updateStudent(madrasaId, studentId, studentData);
       savedStudent = { id: studentId, ...studentData };
-      showAlert(`Student details for "${name}" updated.`);
     } else {
-      // Add mode
       savedStudent = await addStudent(madrasaId, studentData);
-      showAlert(`Student "${name}" added successfully.`);
+      // Replace temp ID with actual ID from database
+      students = students.map(s => s.id === tempStudentId ? { ...s, id: savedStudent.id } : s);
+      localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+      // Re-render to ensure onclick triggers point to correct ID
+      renderStudentsView();
     }
 
     // Photo uploading if selected
     const photoInput = document.getElementById("studentPhotoInput");
     if (photoInput.files && photoInput.files[0]) {
-      showAlert("Uploading student photo...", "info");
-      await uploadStudentPhoto(madrasaId, savedStudent.id, photoInput.files[0]);
-      showAlert("Student photo updated successfully!");
+      try {
+        showAlert("Uploading student photo...", "info");
+        const downloadUrl = await uploadStudentPhoto(madrasaId, savedStudent.id, photoInput.files[0]);
+        // Update local student object photoUrl
+        students = students.map(s => s.id === savedStudent.id ? { ...s, photoUrl: downloadUrl } : s);
+        localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+        renderStudentsView();
+        showAlert("Student photo updated successfully!");
+      } catch (photoError) {
+        console.error("Photo upload error:", photoError);
+        showAlert("Student saved, but photo upload failed.", "warning");
+      }
     }
-
-    addStudentModalObj.hide();
-    await loadDatabaseData();
-    renderStudentsView();
   } catch (error) {
-    console.error(error);
-    showAlert("Error saving student data.", "danger");
+    console.error("Error saving student data:", error);
+    students = originalStudents;
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+    renderStudentsView();
+    showAlert("Error saving student on server. Rolled back.", "danger");
   } finally {
     submitBtn.disabled = false;
   }
 }
 
-window.handleStudentDelete = async function(studentId, name) {
-  if (!confirm(`Are you sure you want to remove student "${name}"? This action deletes their records permanently.`)) {
-    return;
-  }
-  try {
-    await deleteStudent(currentUser.madrasaId, studentId);
-    showAlert(`Student "${name}" deleted.`);
-    await loadDatabaseData();
-    renderStudentsView();
-  } catch (error) {
-    showAlert("Error deleting student.", "danger");
-  }
+window.handleStudentDelete = function(studentId, name) {
+  showDeleteConfirm(
+    `Are you sure you want to remove student "${name}"? This action deletes their records permanently.`,
+    `Remove Student`,
+    async () => {
+      try {
+        await deleteStudent(getMadrasaId(), studentId);
+        showAlert(`Student "${name}" deleted.`);
+        await loadDatabaseData(true);
+        renderStudentsView();
+      } catch (error) {
+        showAlert("Error deleting student.", "danger");
+      }
+    }
+  );
 };
 
 // ==========================================
@@ -666,11 +799,11 @@ function renderDailyView() {
 
       <!-- Actions Buttons -->
       <div class="d-flex flex-wrap gap-2 pt-2 border-top border-light-subtle">
-        <button class="btn btn-sm btn-outline-success flex-grow-1" style="font-size: 11px;" onclick="openPrevLessonModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
-          <i class="bi bi-clock-history me-1"></i>Sabqi (Prev)
-        </button>
         <button class="btn btn-sm btn-primary-premium flex-grow-1 px-1 py-1" style="font-size: 11px;" onclick="openNewLessonModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
           <i class="bi bi-journal-plus me-1"></i>Sabak (New)
+        </button>
+        <button class="btn btn-sm btn-outline-success flex-grow-1" style="font-size: 11px;" onclick="openPrevLessonModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
+          <i class="bi bi-clock-history me-1"></i>Sabqi (Prev)
         </button>
         <button class="btn btn-sm btn-outline-warning flex-grow-1" style="font-size: 11px;" onclick="openDawrahModal('${student.id}')" ${report.attendance === 'absent' ? 'disabled' : ''}>
           <i class="bi bi-bookmark-star me-1"></i>Dawrah (Juz)
@@ -689,7 +822,7 @@ function filterDailyEntry() {
 }
 
 window.saveAttendanceStatus = async function(studentId, status) {
-  const madrasaId = currentUser.madrasaId;
+  const madrasaId = getMadrasaId();
   const dateStr = getTodayDateString();
   const existingReport = todayReports[studentId] || { date: dateStr };
   
@@ -699,15 +832,23 @@ window.saveAttendanceStatus = async function(studentId, status) {
     attendance: status
   };
 
+  const originalReports = { ...todayReports };
+
+  // Optimistic update
+  todayReports[studentId] = updatedReport;
+  localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+  renderDailyView();
+  showAlert("Attendance updated.");
+
   try {
     await saveDailyReport(madrasaId, studentId, updatedReport);
-    todayReports[studentId] = updatedReport;
-    showAlert("Attendance updated.");
-    
-    // Disable or enable modal entry buttons on daily cards by refreshing view
-    setTimeout(() => renderDailyView(), 500);
   } catch (error) {
-    showAlert("Error logging attendance.", "danger");
+    console.error("Error logging attendance:", error);
+    // Rollback
+    todayReports = originalReports;
+    localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+    renderDailyView();
+    showAlert("Error logging attendance: " + error.message, "danger");
   }
 };
 
@@ -751,16 +892,28 @@ async function handlePrevLessonSave(e) {
   const prevLesson = { surah, fromAyah, toAyah, grade, remarks };
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+  const updatedReport = { ...report, date: dateStr, previousLesson: prevLesson };
+
+  const madrasaId = getMadrasaId();
+  const originalReports = { ...todayReports };
+
+  // Optimistic update
+  todayReports[studentId] = updatedReport;
+  localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+  
+  prevLessonModalObj.hide();
+  renderDailyView();
+  showAlert("Sabqi (Previous Lesson) logged successfully.");
 
   try {
-    const updatedReport = { ...report, date: dateStr, previousLesson };
-    await saveDailyReport(currentUser.madrasaId, studentId, updatedReport);
-    todayReports[studentId] = updatedReport;
-    prevLessonModalObj.hide();
+    await saveDailyReport(madrasaId, studentId, updatedReport);
+  } catch (error) {
+    console.error("Error saving prev lesson details:", error);
+    // Rollback
+    todayReports = originalReports;
+    localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
     renderDailyView();
-    showAlert("Sabqi (Previous Lesson) logged successfully.");
-  } catch (e) {
-    showAlert("Error saving lesson details.", "danger");
+    showAlert("Error saving lesson details: " + error.message, "danger");
   }
 }
 
@@ -807,24 +960,42 @@ async function handleNewLessonSave(e) {
   const newLesson = { surah, fromAyah, toAyah, pageNumber, grade, remarks };
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+  const updatedReport = { ...report, date: dateStr, newLesson };
+
+  const madrasaId = getMadrasaId();
+  const originalReports = { ...todayReports };
+  const originalStudents = [...students];
+
+  // Optimistic update todayReports
+  todayReports[studentId] = updatedReport;
+  localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+  
+  // Optimistic update student position
+  const studentIdx = students.findIndex(s => s.id === studentId);
+  if (studentIdx !== -1) {
+    students[studentIdx] = {
+      ...students[studentIdx],
+      currentPage: pageNumber,
+      currentSurah: surah
+    };
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+  }
+
+  newLessonModalObj.hide();
+  renderDailyView();
+  showAlert("Sabak (New Lesson) logged and position updated.");
 
   try {
-    const updatedReport = { ...report, date: dateStr, newLesson };
-    await saveDailyReport(currentUser.madrasaId, studentId, updatedReport);
-    todayReports[studentId] = updatedReport;
-    
-    // Auto-update local students cache positioning for visual consistency
-    const studentIdx = students.findIndex(s => s.id === studentId);
-    if (studentIdx !== -1) {
-      students[studentIdx].currentPage = pageNumber;
-      students[studentIdx].currentSurah = surah;
-    }
-
-    newLessonModalObj.hide();
-    renderDailyView(); // Reload UI to update the position strip
-    showAlert("Sabak (New Lesson) logged and position updated.");
-  } catch (e) {
-    showAlert("Error saving lesson details.", "danger");
+    await saveDailyReport(madrasaId, studentId, updatedReport);
+  } catch (error) {
+    console.error("Error saving new lesson details:", error);
+    // Rollback
+    todayReports = originalReports;
+    students = originalStudents;
+    localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+    renderDailyView();
+    showAlert("Error saving lesson details: " + error.message, "danger");
   }
 }
 
@@ -871,22 +1042,41 @@ async function handleDawrahSave(e) {
   const dawrah = { juzNumber, surah, fromAyah, toAyah, grade, remarks };
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+  const updatedReport = { ...report, date: dateStr, dawrah };
+
+  const madrasaId = getMadrasaId();
+  const originalReports = { ...todayReports };
+  const originalStudents = [...students];
+
+  // Optimistic update report
+  todayReports[studentId] = updatedReport;
+  localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+
+  // Optimistic update student currentJuz
+  const studentIdx = students.findIndex(s => s.id === studentId);
+  if (studentIdx !== -1) {
+    students[studentIdx] = {
+      ...students[studentIdx],
+      currentJuz: juzNumber
+    };
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+  }
+
+  dawrahModalObj.hide();
+  renderDailyView();
+  showAlert("Dawrah log saved.");
 
   try {
-    const updatedReport = { ...report, date: dateStr, dawrah };
-    await saveDailyReport(currentUser.madrasaId, studentId, updatedReport);
-    todayReports[studentId] = updatedReport;
-
-    const studentIdx = students.findIndex(s => s.id === studentId);
-    if (studentIdx !== -1) {
-      students[studentIdx].currentJuz = juzNumber;
-    }
-
-    dawrahModalObj.hide();
+    await saveDailyReport(madrasaId, studentId, updatedReport);
+  } catch (error) {
+    console.error("Error saving dawrah log:", error);
+    // Rollback
+    todayReports = originalReports;
+    students = originalStudents;
+    localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
     renderDailyView();
-    showAlert("Dawrah log saved.");
-  } catch (e) {
-    showAlert("Error saving dawrah log.", "danger");
+    showAlert("Error saving dawrah log: " + error.message, "danger");
   }
 }
 
@@ -941,29 +1131,44 @@ async function handleExtraTrackersSave(e) {
 
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
+  const updatedReport = { ...report, date: dateStr, akhlaq, salah };
+
+  const madrasaId = getMadrasaId();
+  const originalReports = { ...todayReports };
+  const originalStudents = [...students];
+
+  // Optimistic update report
+  todayReports[studentId] = updatedReport;
+  localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+
+  // Optimistic update student achievements
+  const sIdx = students.findIndex(s => s.id === studentId);
+  if (sIdx !== -1) {
+    students[sIdx] = {
+      ...students[sIdx],
+      achievements: achievements
+    };
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
+  }
+
+  extraTrackersModalObj.hide();
+  renderDailyView();
+  showAlert("Trackers and badges updated successfully.");
 
   try {
-    const madrasaId = currentUser.madrasaId;
-    
     // 1. Update report document
-    const updatedReport = { ...report, date: dateStr, akhlaq, salah };
     await saveDailyReport(madrasaId, studentId, updatedReport);
-    todayReports[studentId] = updatedReport;
-
     // 2. Update achievements on the student document
     await updateStudent(madrasaId, studentId, { achievements });
-    
-    // Sync local cache
-    const sIdx = students.findIndex(s => s.id === studentId);
-    if (sIdx !== -1) {
-      students[sIdx].achievements = achievements;
-    }
-
-    extraTrackersModalObj.hide();
+  } catch (error) {
+    console.error("Error saving extra trackers:", error);
+    // Rollback
+    todayReports = originalReports;
+    students = originalStudents;
+    localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
+    localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
     renderDailyView();
-    showAlert("Trackers and badges updated successfully.");
-  } catch (err) {
-    showAlert("Error saving extra trackers.", "danger");
+    showAlert("Error saving extra trackers: " + error.message, "danger");
   }
 }
 
@@ -1011,7 +1216,7 @@ async function renderPerformanceReport() {
   `;
 
   try {
-    const logs = await getStudentReports(currentUser.madrasaId, studentId);
+    const logs = await getStudentReports(getMadrasaId(), studentId);
     
     // Filter limits based on type
     let filteredLogs = [...logs];
@@ -1048,8 +1253,8 @@ async function renderPerformanceReport() {
         <tr>
           <td class="small fw-semibold text-nowrap">${log.date}</td>
           <td>${attBadge}</td>
-          <td class="small">${prevText}</td>
           <td class="small">${newText}</td>
+          <td class="small">${prevText}</td>
           <td class="small">${dawrahText}</td>
           <td class="small text-muted">${log.newLesson?.remarks || log.previousLesson?.remarks || log.dawrah?.remarks || '—'}</td>
         </tr>
@@ -1089,6 +1294,12 @@ async function renderPerformanceReport() {
           <span class="badge bg-success">Juz ${student.currentJuz || 1}</span>
           <span class="badge bg-info">Surah ${student.currentSurah || 'Al-Baqarah'}</span>
         </div>
+        <div class="col-12 mt-2">
+          <span class="small text-muted d-block">Achievements Unlocked</span>
+          <div class="d-flex flex-wrap gap-1 mt-1">
+            ${(student.achievements || []).map(b => `<span class="badge bg-warning text-dark">${b}</span>`).join('') || '<span class="text-muted small">No achievements unlocked yet.</span>'}
+          </div>
+        </div>
       </div>
 
       <div class="table-responsive">
@@ -1097,8 +1308,8 @@ async function renderPerformanceReport() {
             <tr>
               <th>Date</th>
               <th>Attendance</th>
-              <th>Previous Lesson (Sabqi)</th>
               <th>New Lesson (Sabak)</th>
+              <th>Previous Lesson (Sabqi)</th>
               <th>Dawrah / Revision</th>
               <th>Remarks</th>
             </tr>
