@@ -166,15 +166,41 @@
       </div>
     </div>
 
-    <!-- Error Gateway Panel -->
-    <div id="parent-error-panel" class="d-none no-print my-5">
+    <!-- Network Error Panel -->
+    <div id="parent-network-error-panel" class="d-none no-print my-5">
       <div class="glass-card p-5 text-center">
-        <div id="parent-error-icon-container" class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
-          <i id="parent-error-icon" class="bi bi-link-45deg fs-1"></i>
+        <div class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <i class="bi bi-wifi-off fs-1"></i>
         </div>
-        <h4 class="fw-bold text-danger mb-3" id="parent-error-title">Invalid Portal Link</h4>
-        <p class="text-muted small mb-4" id="parent-error-message">You have opened the Parent Portal without a designated Madrasa ID parameter. Each Madrasa owns a secure individual portal.</p>
-        <div id="parent-error-instructions" class="glass-card bg-light border-0 p-3 small text-start">
+        <h4 class="fw-bold text-danger mb-3" id="parent-network-error-title">Connection Lost</h4>
+        <p class="text-muted small mb-4" id="parent-network-error-message">A database connection error occurred. Check your connection.</p>
+        <div class="glass-card bg-light border-0 p-3 small text-start">
+          <strong>Reconnecting Status:</strong>
+          <p class="mb-0 mt-2" id="parent-network-error-retry-text">Retrying automatically in 1 second...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Permission Error Panel -->
+    <div id="parent-permission-error-panel" class="d-none no-print my-5">
+      <div class="glass-card p-5 text-center">
+        <div class="d-inline-flex align-items-center justify-content-center bg-warning-subtle text-warning rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <i class="bi bi-shield-lock fs-1"></i>
+        </div>
+        <h4 class="fw-bold text-warning mb-3" id="parent-permission-error-title">Access Denied</h4>
+        <p class="text-muted small mb-0" id="parent-permission-error-message">You do not have permissions to read this Madrasa's database. Please verify the URL link.</p>
+      </div>
+    </div>
+
+    <!-- Invalid Link Panel -->
+    <div id="parent-invalid-link-panel" class="d-none no-print my-5">
+      <div class="glass-card p-5 text-center">
+        <div class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <i class="bi bi-link-45deg fs-1"></i>
+        </div>
+        <h4 class="fw-bold text-danger mb-3" id="parent-invalid-link-title">Invalid Portal Link</h4>
+        <p class="text-muted small mb-4" id="parent-invalid-link-message">You have opened the Parent Portal without a valid designated Madrasa ID parameter.</p>
+        <div class="glass-card bg-light border-0 p-3 small text-start">
           <strong>How to access your portal:</strong>
           <ol class="mb-0 mt-2 ps-3">
             <li>Contact your Madrasa Admin or Head Usthad.</li>
@@ -182,6 +208,17 @@
             <li>Open the provided link on your phone.</li>
           </ol>
         </div>
+      </div>
+    </div>
+
+    <!-- Madrasa Not Found Panel -->
+    <div id="parent-not-found-panel" class="d-none no-print my-5">
+      <div class="glass-card p-5 text-center">
+        <div class="d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4" style="width: 80px; height: 80px;">
+          <i class="bi bi-exclamation-triangle fs-1"></i>
+        </div>
+        <h4 class="fw-bold text-danger mb-3" id="parent-not-found-title">Madrasa Not Found</h4>
+        <p class="text-muted small mb-0" id="parent-not-found-message">We couldn't find any Madrasa registered with this ID in the database.</p>
       </div>
     </div>
     
@@ -192,7 +229,7 @@
       
       <!-- Premium Hero Banner Header -->
       <div class="glass-card p-0 overflow-hidden mb-4 border-0 shadow-lg" style="border-radius: var(--radius-md);">
-        <div id="portalBrandingHero" class="p-4 text-white d-flex flex-column justify-content-end position-relative" style="background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('assets/madrasa_banner.png') center/cover no-repeat; min-height: 200px;">
+        <div id="portalBrandingHero" class="p-4 text-white d-flex flex-column justify-content-end position-relative" style="background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('assets/madrasa_banner.jpg') center/cover no-repeat; min-height: 200px;">
           <!-- Subtle decorative overlay pattern -->
           <div class="position-absolute top-0 end-0 p-3 opacity-10">
             <i class="bi bi-book-half" style="font-size: 140px; line-height: 1;"></i>
@@ -203,7 +240,7 @@
             </div>
             <div class="min-w-0">
               <span class="badge text-white rounded-pill px-2 py-1 mb-1 small fw-bold" style="font-size: 10px; background: rgba(16, 185, 129, 0.85);">PARENT ACCESS PORTAL</span>
-              <h3 class="fw-bold mb-0 text-truncate" id="portalBrandingTitle">Darul Quran Academy</h3>
+              <h3 class="fw-bold mb-0 text-truncate text-white" id="portalBrandingTitle">Quran Academy</h3>
               <p class="mb-0 small opacity-90"><i class="bi bi-geo-alt-fill me-1"></i><span id="portalBrandingLocation">Kerala, India</span></p>
             </div>
           </div>

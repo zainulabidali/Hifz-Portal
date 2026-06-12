@@ -12,7 +12,8 @@ import {
   uploadStudentPhoto, 
   saveDailyReport, 
   getStudentReports, 
-  getTodayReports 
+  getTodayReports,
+  verifyMadrasaExists
 } from "./db.js";
 
 // Helper to resolve the active Madrasa ID for online/offline modes
@@ -199,7 +200,7 @@ function setupEventListeners() {
     switchTab(e.detail);
   });
 
-  // Parent Portal URL builder to handle subdirectories (localhost) and clean URLs (production)
+  // Parent Portal URL builder
   const getPortalUrl = (madrasaId) => {
     const origin = window.location.origin;
     const path = window.location.pathname;
@@ -210,23 +211,42 @@ function setupEventListeners() {
       basePath = path.substring(0, lastSlashIndex + 1);
     }
     
-    const isHtml = path.endsWith(".html") || path.includes(".html");
-    const filename = isHtml ? "parent-portal.html" : "parent-portal";
-    
+    // Explicit filename and strictly use madrasaId
+    const filename = "parent-portal.html";
     return `${origin}${basePath}${filename}?madrasaId=${madrasaId}`;
   };
 
   // Parent Portal Quick Actions
-  document.getElementById("openParentPortalBtn").addEventListener("click", () => {
+  document.getElementById("openParentPortalBtn").addEventListener("click", async () => {
     const madrasaId = getMadrasaId();
-    if (!madrasaId) return;
-    const portalUrl = getPortalUrl(madrasaId);
-    window.open(portalUrl, "_blank");
+    if (!madrasaId) {
+      showAlert("No active Madrasa ID found.", "danger");
+      return;
+    }
+    
+    showLoading();
+    try {
+      const exists = await verifyMadrasaExists(madrasaId);
+      hideLoading();
+      if (exists) {
+        const portalUrl = getPortalUrl(madrasaId);
+        window.open(portalUrl, "_blank");
+      } else {
+        showAlert("Madrasa profile does not exist in the database.", "danger");
+      }
+    } catch (err) {
+      hideLoading();
+      console.error("Verification failed:", err);
+      showAlert("Verification failed. Please check your network connection.", "danger");
+    }
   });
 
   document.getElementById("copyParentPortalBtn").addEventListener("click", () => {
     const madrasaId = getMadrasaId();
-    if (!madrasaId) return;
+    if (!madrasaId) {
+      showAlert("No active Madrasa ID found.", "danger");
+      return;
+    }
     const portalUrl = getPortalUrl(madrasaId);
     navigator.clipboard.writeText(portalUrl)
       .then(() => showAlert("Parent Portal link copied to clipboard!"))
@@ -238,14 +258,22 @@ function setupEventListeners() {
 
   document.getElementById("shareParentPortalBtn").addEventListener("click", () => {
     const madrasaId = getMadrasaId();
-    if (!madrasaId) return;
+    if (!madrasaId) {
+      showAlert("No active Madrasa ID found.", "danger");
+      return;
+    }
     const portalUrl = getPortalUrl(madrasaId);
     if (navigator.share) {
       navigator.share({
         title: `${currentMadrasa?.name || "Hifz Progress Portal"} - Parent Portal`,
         text: `Track your child's Quran memorization progress online:`,
         url: portalUrl
-      }).catch(err => console.log("Error sharing:", err));
+      }).catch(err => {
+        console.log("Error sharing:", err);
+        // Fallback on user cancel or share failure
+        navigator.clipboard.writeText(portalUrl);
+        showAlert("Link copied to clipboard.");
+      });
     } else {
       navigator.clipboard.writeText(portalUrl);
       showAlert("Sharing not supported on this device. Link copied to clipboard!");

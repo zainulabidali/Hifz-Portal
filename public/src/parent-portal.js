@@ -1,32 +1,29 @@
-import { getStudentReports, getStudents, getClasses } from "./db.js";
+import { getStudentReports } from "./db.js";
 import { isOfflineMode, db } from "../firebase-config.js";
 import { showToast } from "./ui-notifications.js";
-import { 
-  collection, 
-  doc, 
+import {
+  collection,
+  doc,
   getDoc,
   getDocs,
-  query,
-  where,
-  limit
+  onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// URL parameters
+// ==========================================
+// STATE MANAGEMENT (Clean & Non-Corruptible)
+// ==========================================
 const urlParams = new URLSearchParams(window.location.search);
-// Support all possible parameter variations: madrasaId, madrasaID, madrasaid, id, portalId
-const madrasaId = urlParams.get("madrasaId") || 
-                  urlParams.get("madrasaID") || 
-                  urlParams.get("madrasaid") || 
-                  urlParams.get("id") || 
-                  urlParams.get("portalId");
+const madrasaId = urlParams.get("madrasaId");
 
-// State caching
 let madrasaDetails = null;
 let students = [];
 let classes = [];
 let selectedStudent = null;
 let selectedStudentLogs = [];
 let leaderboardActiveTab = "daily";
+
+// In-memory cache for student reports (to avoid duplicate Firestore reads)
+const studentReportsCache = {};
 
 // Chart.js instances
 let chartGrades = null;
@@ -38,385 +35,320 @@ let chartMonthlyVolume = null;
 
 const RING_CIRCUMFERENCE = 377; // 2 * PI * 60
 
-document.addEventListener("DOMContentLoaded", async () => {
-  console.log("Portal URL:", window.location.href);
-  console.log("Madrasa ID:", madrasaId);
+// Retry backoff configurations
+let initialLoadRetries = 0;
+const backoffDelays = [1000, 2000, 4000, 8000];
+let retryTimeoutId = null;
 
-  if (!madrasaId) {
-    showGatewayError("Missing ID", "You have opened the Parent Portal without a designated Madrasa ID parameter. Each Madrasa owns a secure individual portal.", "bi-link-45deg", true);
+// ==========================================
+// INITIALIZATION
+// ==========================================
+document.addEventListener("DOMContentLoaded", () => {
+  // Clean up legacy portal cache from localStorage
+  cleanupLegacyCache();
+
+  // Validate parameter layout
+  if (!madrasaId || !/^[a-zA-Z0-9_-]+$/.test(madrasaId)) {
+    switchScreen('invalid-link');
     return;
   }
 
-  // Validate ID: check if it's alphanumeric or valid format for Firebase UID (letters, numbers, underscores, hyphens)
-  const isValidId = /^[a-zA-Z0-9_-]+$/.test(madrasaId);
-  if (!isValidId || madrasaId.toLowerCase().includes("placeholder") || madrasaId.toLowerCase().includes("xxxxx")) {
-    showGatewayError("Invalid ID", `The Madrasa ID parameter "${madrasaId}" contains invalid characters or template placeholders.`, "bi-exclamation-triangle", true);
-    return;
+  // Start the loading flow
+  startInitialLoad();
+});
+
+// Clean up old cached entries to prevent state contamination
+function cleanupLegacyCache() {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("cache_parent_")) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch (e) {
+    console.error("Failed to clean legacy cache:", e);
   }
+}
 
-  // Setup initial loading screen state
-  showLoadingScreen("Connecting to Portal...", "Verifying database connections and gathering reports.");
+// ==========================================
+// SCREEN SWITCHER (Prevent screen leakages)
+// ==========================================
+function switchScreen(screenName) {
+  const panels = {
+    'loading': 'parent-loading-panel',
+    'network-error': 'parent-network-error-panel',
+    'permission-error': 'parent-permission-error-panel',
+    'invalid-link': 'parent-invalid-link-panel',
+    'not-found': 'parent-not-found-panel',
+    'search': 'parent-search-panel',
+    'profile': 'parent-profile-panel'
+  };
 
-  const success = await loadPortalData();
-  if (success) {
-    hideLoadingScreen();
+  // Hide all screens
+  Object.values(panels).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.add('d-none');
+      el.classList.remove('d-block');
+    }
+  });
+
+  // Show selected screen
+  const activeId = panels[screenName];
+  if (activeId) {
+    const el = document.getElementById(activeId);
+    if (el) {
+      el.classList.remove('d-none');
+      el.classList.add('d-block');
+    }
+  }
+}
+
+// ==========================================
+// INITIAL LOADING & RETRY SYSTEM
+// ==========================================
+async function startInitialLoad() {
+  switchScreen('loading');
+  document.getElementById("parent-loading-title").textContent = "Connecting to Portal...";
+  document.getElementById("parent-loading-message").textContent = "Verifying database connections and gathering reports.";
+
+  try {
+    const exists = await fetchInitialData();
+    if (!exists) {
+      switchScreen('not-found');
+      return;
+    }
+
+    // Success! Transition to search panel
+    switchScreen('search');
     setupSearchSystem();
     setupPrintTriggers();
     switchLeaderboardTab("daily");
-  }
-});
 
-function showLoadingScreen(title = "Connecting to Portal...", message = "") {
-  document.getElementById("parent-search-panel").classList.add("d-none");
-  document.getElementById("parent-profile-panel").classList.add("d-none");
-  document.getElementById("parent-error-panel").classList.add("d-none");
-  
-  const loadingPanel = document.getElementById("parent-loading-panel");
-  if (loadingPanel) {
-    loadingPanel.classList.remove("d-none");
-    document.getElementById("parent-loading-title").textContent = title;
-    document.getElementById("parent-loading-message").textContent = message;
-  }
-}
+    // Initialize real-time listeners (only after initial load succeeds)
+    setupLiveListeners();
 
-function hideLoadingScreen() {
-  const loadingPanel = document.getElementById("parent-loading-panel");
-  if (loadingPanel) {
-    loadingPanel.classList.add("d-none");
-  }
-  
-  // Show default search panel
-  const searchPanel = document.getElementById("parent-search-panel");
-  if (searchPanel) {
-    searchPanel.classList.remove("d-none");
-    searchPanel.classList.add("d-block");
-  }
-}
-
-function showGatewayError(type, message, iconClass = "bi-exclamation-triangle", showInstructions = true) {
-  // Hide loading, search, profile panels
-  const loadingPanel = document.getElementById("parent-loading-panel");
-  if (loadingPanel) loadingPanel.classList.add("d-none");
-  document.getElementById("parent-search-panel").classList.add("d-none");
-  document.getElementById("parent-profile-panel").classList.add("d-none");
-  
-  const errorPanel = document.getElementById("parent-error-panel");
-  errorPanel.classList.remove("d-none");
-  
-  const titleEl = document.getElementById("parent-error-title");
-  const msgEl = document.getElementById("parent-error-message");
-  const iconEl = document.getElementById("parent-error-icon");
-  const iconContainerEl = document.getElementById("parent-error-icon-container");
-  const instructionsEl = document.getElementById("parent-error-instructions");
-  
-  if (titleEl) titleEl.textContent = type;
-  if (msgEl) msgEl.textContent = message;
-  
-  if (iconEl) {
-    iconEl.className = `bi ${iconClass} fs-1`;
-  }
-  
-  // Custom styling based on error severity
-  if (iconContainerEl) {
-    if (type.includes("Permission") || type.includes("Security")) {
-      iconContainerEl.className = "d-inline-flex align-items-center justify-content-center bg-warning-subtle text-warning rounded-circle p-4 mb-4";
-    } else if (type.includes("Error") || type.includes("Network")) {
-      iconContainerEl.className = "d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4";
-    } else {
-      iconContainerEl.className = "d-inline-flex align-items-center justify-content-center bg-danger-subtle text-danger rounded-circle p-4 mb-4";
-    }
-  }
-  
-  if (instructionsEl) {
-    if (showInstructions) {
-      instructionsEl.classList.remove("d-none");
-    } else {
-      instructionsEl.classList.add("d-none");
-    }
-  }
-}
-
-function updatePortalUI() {
-  if (madrasaDetails) {
-    document.getElementById("portalBrandingTitle").textContent = madrasaDetails.name;
-    document.getElementById("portalBrandingLocation").textContent = madrasaDetails.location || "Location not set";
-    document.getElementById("portalBrandingContact").textContent = madrasaDetails.mobile || madrasaDetails.phone || "No Contact info";
-    document.getElementById("portalBrandingEmail").textContent = madrasaDetails.email || "No Email info";
-
-    const logoEl = document.getElementById("portalBrandingLogo");
-    if (logoEl) {
-      logoEl.src = madrasaDetails.logoUrl || "assets/madrasa_logo.png";
-    }
-
-    const heroEl = document.getElementById("portalBrandingHero");
-    if (heroEl) {
-      if (madrasaDetails.bannerUrl) {
-        heroEl.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('${madrasaDetails.bannerUrl}')`;
-      } else {
-        heroEl.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('assets/madrasa_banner.png')`;
-      }
-    }
-
-    document.getElementById("statsStudentCount").textContent = students.length;
-    document.getElementById("statsClassCount").textContent = classes.length;
-  }
-}
-
-async function loadPortalData() {
-  const cacheKeyMadrasa = `cache_parent_madrasa_${madrasaId}`;
-  const cacheKeyClasses = `cache_parent_classes_${madrasaId}`;
-  const cacheKeyStudents = `cache_parent_students_${madrasaId}`;
-  const cacheKeyTime = `cache_parent_time_${madrasaId}`;
-
-  const cachedMadrasa = localStorage.getItem(cacheKeyMadrasa);
-  const cachedClasses = localStorage.getItem(cacheKeyClasses);
-  const cachedStudents = localStorage.getItem(cacheKeyStudents);
-  const cachedTime = localStorage.getItem(cacheKeyTime);
-  const now = Date.now();
-
-  let hasValidCache = false;
-  if (cachedMadrasa && cachedClasses && cachedStudents) {
-    try {
-      madrasaDetails = JSON.parse(cachedMadrasa);
-      classes = JSON.parse(cachedClasses);
-      students = JSON.parse(cachedStudents);
-      hasValidCache = true;
-    } catch (e) {
-      console.error("Failed to parse cached portal data", e);
-    }
-  }
-
-  if (hasValidCache) {
-    console.log("Loading page instantly from Stale-While-Revalidate Cache...");
-    updatePortalUI();
-    // Render leaderboard with cached data initially
-    switchLeaderboardTab(leaderboardActiveTab);
-
-    // If cache is fresh (less than 30 seconds old), bypass revalidation
-    if (cachedTime && (now - parseInt(cachedTime) < 30000)) {
-      console.log("Parent Portal: Using cached data (fresh)");
-      return true;
-    }
-
-    // Trigger background update silently to avoid disrupting visible UI on connection errors
-    fetchFreshPortalData(true).catch(err => {
-      console.warn("Background revalidation sync failed. Keeping stale cache active.", err);
-    });
-    return true; // Return true immediately to show page content
-  }
-
-  // No cache available. We must block and load initially
-  return await fetchFreshPortalData(false);
-}
-
-async function fetchFreshPortalData(isBackground = false) {
-  const cacheKeyMadrasa = `cache_parent_madrasa_${madrasaId}`;
-  const cacheKeyClasses = `cache_parent_classes_${madrasaId}`;
-  const cacheKeyStudents = `cache_parent_students_${madrasaId}`;
-  const cacheKeyTime = `cache_parent_time_${madrasaId}`;
-
-  try {
-    if (isOfflineMode) {
-      // Offline Simulation Data Fetch
-      const mockMMap = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
-      const localMadrasa = mockMMap[madrasaId];
-      if (!localMadrasa) {
-        if (isBackground) {
-          showToast("Madrasa profile was not found in background refresh.", "warning");
-        } else {
-          showGatewayError("Madrasa Not Found", `We couldn't find a Madrasa matching the ID "${madrasaId}" in our offline database.`, "bi-exclamation-triangle", true);
-        }
-        return false;
-      }
-
-      // Load classes
-      const mockClasses = JSON.parse(localStorage.getItem(`mock_classes_${madrasaId}`)) || {};
-      const freshClasses = Object.values(mockClasses);
-
-      // Load students
-      const mockStudents = JSON.parse(localStorage.getItem(`mock_students_${madrasaId}`)) || {};
-      const freshStudents = Object.values(mockStudents);
-
-      // Ensure rankings and mock scores are set
-      freshStudents.forEach(s => {
-        s.score = s.score || ((s.currentPage || 1) * 10 + (s.achievements || []).length * 50);
-        s.dailyScore = s.dailyScore || (Math.round(s.score * 0.1) + Math.floor(Math.random() * 20));
-        s.weeklyScore = s.weeklyScore || (Math.round(s.score * 0.4) + Math.floor(Math.random() * 50));
-        s.monthlyScore = s.monthlyScore || (Math.round(s.score * 0.8) + Math.floor(Math.random() * 100));
-        s.currentRank = s.currentRank || (Math.floor(Math.random() * 8) + 1);
-        s.previousRank = s.previousRank || (s.currentRank + (Math.random() > 0.5 ? 1 : -1));
-      });
-
-      // Write updates to state variables
-      madrasaDetails = localMadrasa;
-      classes = freshClasses;
-      students = freshStudents;
-
-      // Save to cache
-      localStorage.setItem(cacheKeyMadrasa, JSON.stringify(madrasaDetails));
-      localStorage.setItem(cacheKeyClasses, JSON.stringify(classes));
-      localStorage.setItem(cacheKeyStudents, JSON.stringify(students));
-      localStorage.setItem(cacheKeyTime, Date.now().toString());
-
-      updatePortalUI();
-      return true;
-    } else {
-      // Live Firebase Data Fetch
-      console.log("Madrasa ID:", madrasaId);
-
-      let mDoc;
-      try {
-        mDoc = await getDoc(doc(db, "madrasas", madrasaId));
-      } catch (dbErr) {
-        console.error("Firestore read error:", dbErr);
-        if (isBackground) {
-          showToast("Network sync error. Displaying offline data.", "warning");
-        } else {
-          if (dbErr.code === "permission-denied" || dbErr.message?.includes("permission")) {
-            showGatewayError("Permission Error", "Access denied. You do not have permissions to read this Madrasa's database. Please verify the URL link.", "bi-shield-lock", false);
-          } else {
-            showGatewayError("Network Error", `A database connection error occurred: ${dbErr.message}. Check your connection.`, "bi-wifi-off", false);
-          }
-        }
-        return false;
-      }
-
-      console.log("Before Not Found Trigger");
-      console.log("Madrasa Loaded:", mDoc.exists() ? mDoc.data() : null);
-
-      if (!mDoc.exists()) {
-        if (isBackground) {
-          showToast("This Madrasa profile was not found on the database.", "warning");
-        } else {
-          console.trace();
-          showGatewayError("Madrasa Not Found", `We couldn't find any Madrasa registered with the ID "${madrasaId}" in our cloud database.`, "bi-exclamation-triangle", true);
-        }
-        return false;
-      }
-      const freshMadrasaDetails = mDoc.data();
-
-      // Classes
-      let freshClasses = [];
-      try {
-        const cSnapshot = await getDocs(collection(db, "madrasas", madrasaId, "classes"));
-        freshClasses = cSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      } catch (classErr) {
-        console.error("Error loading classes:", classErr);
-        if (isBackground) {
-          showToast("Failed to refresh class registry.", "warning");
-        } else {
-          showGatewayError("Firestore Error", `Failed to load classes from database: ${classErr.message}`, "bi-exclamation-octagon", false);
-        }
-        return false;
-      }
-
-      // Students - limited to 20 to conform to security rules
-      let freshStudents = [];
-      try {
-        const sSnapshot = await getDocs(query(collection(db, "madrasas", madrasaId, "students"), limit(20)));
-        freshStudents = sSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      } catch (studentErr) {
-        console.error("Error loading students:", studentErr);
-        if (isBackground) {
-          showToast("Failed to refresh students list.", "warning");
-        } else {
-          showGatewayError("Firestore Error", `Failed to load students from database: ${studentErr.message}`, "bi-exclamation-octagon", false);
-        }
-        return false;
-      }
-
-      // Setup default mock rank fields for sorting if none exists on firestore
-      freshStudents.forEach(s => {
-        s.score = s.score || ((s.currentPage || 1) * 10);
-        s.dailyScore = s.dailyScore || Math.round(s.score * 0.15);
-        s.weeklyScore = s.weeklyScore || Math.round(s.score * 0.45);
-        s.monthlyScore = s.monthlyScore || Math.round(s.score * 0.85);
-        s.currentRank = s.currentRank || 1;
-        s.previousRank = s.previousRank || 2;
-      });
-
-      // Compare and update cache
-      madrasaDetails = freshMadrasaDetails;
-      classes = freshClasses;
-      students = freshStudents;
-
-      localStorage.setItem(cacheKeyMadrasa, JSON.stringify(madrasaDetails));
-      localStorage.setItem(cacheKeyClasses, JSON.stringify(classes));
-      localStorage.setItem(cacheKeyStudents, JSON.stringify(freshStudents));
-      localStorage.setItem(cacheKeyTime, Date.now().toString());
-
-      updatePortalUI();
-      return true;
-    }
   } catch (error) {
-    console.error("Error fetching fresh portal data:", error);
-    if (isBackground) {
-      showToast("Background update failed. Keeping cached data.", "warning");
+    console.error("Portal initial load failed:", error);
+    if (error.code === "permission-denied" || error.message?.toLowerCase().includes("permission")) {
+      switchScreen('permission-error');
     } else {
-      showGatewayError("Loading Error", `An unexpected error occurred while loading portal data: ${error.message}`, "bi-exclamation-diamond", false);
+      handleInitialLoadNetworkError(error);
     }
-    return false;
   }
 }
 
-// ==========================================
-// SEARCH ENGINE: NAME OR ADMISSION NUMBER
-// ==========================================
-async function searchStudentsInFirestore(queryText) {
-  const val = queryText.toLowerCase().trim();
-  if (!val) return [];
-
+// Fetch all required data once using getDoc/getDocs (no listeners)
+async function fetchInitialData() {
   if (isOfflineMode) {
+    const mockMMap = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
+    const localMadrasa = mockMMap[madrasaId];
+    if (!localMadrasa) return false;
+
+    const mockClasses = JSON.parse(localStorage.getItem(`mock_classes_${madrasaId}`)) || {};
+    const freshClasses = Object.values(mockClasses);
+
     const mockStudents = JSON.parse(localStorage.getItem(`mock_students_${madrasaId}`)) || {};
-    const studentsList = Object.values(mockStudents);
-    return studentsList.filter(s => 
-      s.name.toLowerCase().includes(val) || 
-      s.admissionNumber.toLowerCase().includes(val)
-    );
+    const freshStudents = Object.values(mockStudents);
+
+    // Seed mock scores
+    seedRanksAndScores(freshStudents);
+
+    // Save to state
+    madrasaDetails = localMadrasa;
+    classes = freshClasses;
+    students = freshStudents;
+
+    updatePortalUI();
+    return true;
   } else {
-    // Construct real-time prefix search queries
+    // Read Madrasa doc
+    const mDocRef = doc(db, "madrasas", madrasaId);
+    const mDoc = await getDoc(mDocRef);
+    if (!mDoc.exists()) return false;
+
+    // Read Classes list
+    const classesCol = collection(db, "madrasas", madrasaId, "classes");
+    const classesSnap = await getDocs(classesCol);
+    const freshClasses = classesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Read Students list (fetch all once so we can search locally in-memory)
     const studentsCol = collection(db, "madrasas", madrasaId, "students");
-    
-    // We execute queries to cover name (Title Case, lower case, upper case) and admission number.
-    const titleCaseVal = queryText.charAt(0).toUpperCase() + queryText.slice(1);
-    const upperVal = queryText.toUpperCase();
-    
-    const queries = [];
-    
-    // Query 1: Name prefix (Title Case, e.g., "Ah" -> "Ahmed")
-    queries.push(query(studentsCol, where("name", ">=", titleCaseVal), where("name", "<=", titleCaseVal + "\uf8ff"), limit(20)));
-    
-    // Query 2: Name prefix (original input case)
-    if (titleCaseVal !== queryText) {
-      queries.push(query(studentsCol, where("name", ">=", queryText), where("name", "<=", queryText + "\uf8ff"), limit(20)));
+    const studentsSnap = await getDocs(studentsCol);
+    const freshStudents = studentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    seedRanksAndScores(freshStudents);
+
+    // Save to state
+    madrasaDetails = mDoc.data();
+    classes = freshClasses;
+    students = freshStudents;
+
+    updatePortalUI();
+    return true;
+  }
+}
+
+// Exponential backoff retry handler
+function handleInitialLoadNetworkError(error) {
+  switchScreen('network-error');
+  document.getElementById("parent-network-error-message").textContent = `A database connection error occurred: ${error.message || error}.`;
+
+  const delay = backoffDelays[Math.min(initialLoadRetries, backoffDelays.length - 1)];
+  initialLoadRetries++;
+
+  let secondsLeft = Math.round(delay / 1000);
+  const retryTextEl = document.getElementById("parent-network-error-retry-text");
+
+  if (retryTextEl) {
+    retryTextEl.textContent = `Retrying automatically in ${secondsLeft} second${secondsLeft > 1 ? 's' : ''}...`;
+  }
+
+  if (retryTimeoutId) clearTimeout(retryTimeoutId);
+
+  const intervalId = setInterval(() => {
+    secondsLeft--;
+    if (secondsLeft <= 0) {
+      clearInterval(intervalId);
+      startInitialLoad();
+    } else {
+      if (retryTextEl) {
+        retryTextEl.textContent = `Retrying automatically in ${secondsLeft} second${secondsLeft > 1 ? 's' : ''}...`;
+      }
     }
-    
-    // Query 3: Name prefix (uppercase, e.g., "AHMED")
-    if (upperVal !== titleCaseVal && upperVal !== queryText) {
-      queries.push(query(studentsCol, where("name", ">=", upperVal), where("name", "<=", upperVal + "\uf8ff"), limit(20)));
+  }, 1000);
+}
+
+// Helper to seed scores/ranks if missing
+function seedRanksAndScores(studentList) {
+  studentList.forEach(s => {
+    s.score = s.score || ((s.currentPage || 1) * 10 + (s.achievements || []).length * 50);
+    s.dailyScore = s.dailyScore || (Math.round(s.score * 0.1) + Math.floor(Math.random() * 20));
+    s.weeklyScore = s.weeklyScore || (Math.round(s.score * 0.4) + Math.floor(Math.random() * 50));
+    s.monthlyScore = s.monthlyScore || (Math.round(s.score * 0.8) + Math.floor(Math.random() * 100));
+    s.currentRank = s.currentRank || (Math.floor(Math.random() * 8) + 1);
+    s.previousRank = s.previousRank || (s.currentRank + (Math.random() > 0.5 ? 1 : -1));
+  });
+}
+
+// ==========================================
+// REAL-TIME FIRESTORE LISTENERS (Safe Update)
+// ==========================================
+let activeListeners = [];
+
+function setupLiveListeners() {
+  if (isOfflineMode) return;
+
+  // Clear existing
+  activeListeners.forEach(unsub => unsub());
+  activeListeners = [];
+
+  // Listen to classes updates
+  const classesCol = collection(db, "madrasas", madrasaId, "classes");
+  const unsubClasses = onSnapshot(classesCol, (snapshot) => {
+    classes = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    updatePortalUI();
+    if (selectedStudent) {
+      loadStudentProfileView();
+    }
+  }, (error) => {
+    console.warn("Classes live sync connection lost:", error);
+    showToast("Connection lost. Retrying...", "warning");
+  });
+  activeListeners.push(unsubClasses);
+
+  // Listen to students updates
+  const studentsCol = collection(db, "madrasas", madrasaId, "students");
+  const unsubStudents = onSnapshot(studentsCol, (snapshot) => {
+    const freshStudents = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    seedRanksAndScores(freshStudents);
+    students = freshStudents;
+
+    // Refresh UI counts
+    updatePortalUI();
+
+    // Refresh Leaderboard
+    if (leaderboardActiveTab) {
+      renderLeaderboardList(leaderboardActiveTab);
     }
 
-    // Query 4: Admission Number prefix
-    queries.push(query(studentsCol, where("admissionNumber", ">=", queryText), where("admissionNumber", "<=", queryText + "\uf8ff"), limit(20)));
-    
-    // Execute queries in parallel
-    const snapshots = await Promise.all(queries.map(q => getDocs(q)));
-    
-    // Merge unique results
-    const resultsMap = new Map();
-    snapshots.forEach(snapshot => {
-      snapshot.docs.forEach(doc => {
-        resultsMap.set(doc.id, { id: doc.id, ...doc.data() });
-      });
-    });
-    
-    // Filter results locally to support partial match and case-insensitivity
-    const allMerged = Array.from(resultsMap.values());
-    return allMerged.filter(s => 
-      s.name.toLowerCase().includes(val) || 
-      s.admissionNumber.toLowerCase().includes(val)
-    );
+    // Refresh active student profile live
+    if (selectedStudent) {
+      const updated = students.find(s => s.id === selectedStudent.id);
+      if (updated) {
+        selectedStudent = updated;
+        loadStudentProfileView();
+      }
+    }
+  }, (error) => {
+    console.warn("Students live sync connection lost:", error);
+    showToast("Connection lost. Retrying...", "warning");
+  });
+  activeListeners.push(unsubStudents);
+}
+
+// ==========================================
+// PORTAL UI RENDER (Top Header Details)
+// ==========================================
+function updatePortalUI() {
+  if (!madrasaDetails) return;
+
+  document.getElementById("portalBrandingTitle").textContent = madrasaDetails.name;
+  document.getElementById("portalBrandingLocation").textContent = madrasaDetails.location || "Location not set";
+  document.getElementById("portalBrandingContact").textContent = madrasaDetails.mobile || madrasaDetails.phone || "No Contact info";
+  document.getElementById("portalBrandingEmail").textContent = madrasaDetails.email || "No Email info";
+
+  const logoEl = document.getElementById("portalBrandingLogo");
+  if (logoEl) {
+    logoEl.src = madrasaDetails.logoUrl || "assets/madrasa_logo.png";
   }
+
+  const heroEl = document.getElementById("portalBrandingHero");
+  if (heroEl) {
+    if (madrasaDetails.bannerUrl) {
+      heroEl.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('${madrasaDetails.bannerUrl}')`;
+    } else {
+      heroEl.style.backgroundImage = `linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 100%), url('assets/madrasa_banner.jpg')`;
+    }
+  }
+
+  document.getElementById("statsStudentCount").textContent = students.length;
+  document.getElementById("statsClassCount").textContent = classes.length;
+}
+
+// ==========================================
+// IN-MEMORY LOCAL SEARCH ENGINE
+// ==========================================
+function setupSearchSystem() {
+  const searchInput = document.getElementById("parentSearchInput");
+  const resultsSection = document.getElementById("searchResultsSection");
+  const resultsContainer = document.getElementById("searchResultsContainer");
+  const leaderboardSection = document.getElementById("leaderboardSection");
+  const searchMessage = document.getElementById("searchMessage");
+
+  searchInput.addEventListener("input", () => {
+    const val = searchInput.value.trim();
+    if (searchMessage) searchMessage.classList.add("d-none");
+
+    if (!val) {
+      resultsSection.classList.add("d-none");
+      leaderboardSection.classList.remove("d-none");
+      return;
+    }
+
+    leaderboardSection.classList.add("d-none");
+    resultsSection.classList.remove("d-none");
+
+    // Perform local in-memory filtering (ZERO firestore reads!)
+    const queryLower = val.toLowerCase();
+    const matches = students.filter(s =>
+      s.name.toLowerCase().includes(queryLower) ||
+      s.admissionNumber.toLowerCase().includes(queryLower)
+    );
+
+    renderSearchResults(matches);
+  });
 }
 
 function renderSearchResults(matches) {
@@ -430,114 +362,66 @@ function renderSearchResults(matches) {
         <span class="small">No matching students found in this Madrasa.</span>
       </div>
     `;
-  } else {
-    matches.forEach(student => {
-      const className = classes.find(c => c.id === student.classId)?.name || "Unassigned";
-      const avatar = student.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}&backgroundColor=10b981`;
-
-      const cardCol = document.createElement("div");
-      cardCol.className = "col-12 col-md-6";
-      cardCol.innerHTML = `
-        <div class="glass-card mb-0 p-3 h-100 d-flex align-items-center gap-3">
-          <img src="${avatar}" class="student-avatar" style="width: 48px; height: 48px;" alt="${student.name}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}'">
-          <div class="flex-grow-1 min-w-0">
-            <h6 class="fw-bold mb-0 text-truncate text-success">${student.name}</h6>
-            <div class="small text-muted" style="font-size: 11px;">
-              <span>Adm: <strong>${student.admissionNumber}</strong></span> | 
-              <span>Juz: <strong class="text-success">${student.currentJuz || 1}</strong></span>
-            </div>
-            <div class="small text-muted" style="font-size: 11px;">Class: ${className}</div>
-          </div>
-          <button class="btn btn-sm btn-primary-premium rounded-pill px-3 py-1" style="font-size: 11px;" onclick="openProfileDirectly('${student.id}')">
-            View Profile
-          </button>
-        </div>
-      `;
-      resultsContainer.appendChild(cardCol);
-    });
+    return;
   }
-}
 
-function setupSearchSystem() {
-  const searchInput = document.getElementById("parentSearchInput");
-  const resultsSection = document.getElementById("searchResultsSection");
-  const resultsContainer = document.getElementById("searchResultsContainer");
-  const leaderboardSection = document.getElementById("leaderboardSection");
-  const searchMessage = document.getElementById("searchMessage");
+  matches.forEach(student => {
+    const className = classes.find(c => c.id === student.classId)?.name || "Unassigned";
+    const avatar = student.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}&backgroundColor=10b981`;
 
-  let searchTimeout = null;
-
-  searchInput.addEventListener("input", () => {
-    const val = searchInput.value.trim();
-    searchMessage.classList.add("d-none");
-
-    if (!val) {
-      // Restore default leaderboard view
-      resultsSection.classList.add("d-none");
-      leaderboardSection.classList.remove("d-none");
-      if (searchTimeout) clearTimeout(searchTimeout);
-      return;
-    }
-
-    // Show loading spinner
-    resultsContainer.innerHTML = `
-      <div class="col-12 text-center text-muted py-5">
-        <div class="spinner-border text-success spinner-border-sm mb-2" role="status"></div>
-        <p class="small mb-0">Searching students...</p>
+    const cardCol = document.createElement("div");
+    cardCol.className = "col-12 col-md-6";
+    cardCol.innerHTML = `
+      <div class="glass-card mb-0 p-3 h-100 d-flex align-items-center gap-3">
+        <img src="${avatar}" class="student-avatar" style="width: 48px; height: 48px;" alt="${student.name}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}'">
+        <div class="flex-grow-1 min-w-0">
+          <h6 class="fw-bold mb-0 text-truncate text-success">${student.name}</h6>
+          <div class="small text-muted" style="font-size: 11px;">
+            <span>Adm: <strong>${student.admissionNumber}</strong></span> | 
+            <span>Juz: <strong class="text-success">${student.currentJuz || 1}</strong></span>
+          </div>
+          <div class="small text-muted" style="font-size: 11px;">Class: ${className}</div>
+        </div>
+        <button class="btn btn-sm btn-primary-premium rounded-pill px-3 py-1" style="font-size: 11px;" onclick="openProfileDirectly('${student.id}')">
+          View Profile
+        </button>
       </div>
     `;
-    leaderboardSection.classList.add("d-none");
-    resultsSection.classList.remove("d-none");
-
-    if (searchTimeout) clearTimeout(searchTimeout);
-
-    searchTimeout = setTimeout(async () => {
-      try {
-        const matches = await searchStudentsInFirestore(val);
-
-        // Merge matches into global students array so view profile can access them
-        matches.forEach(m => {
-          if (!students.find(s => s.id === m.id)) {
-            students.push(m);
-          }
-        });
-
-        renderSearchResults(matches);
-      } catch (error) {
-        console.error("Search system error:", error);
-        resultsContainer.innerHTML = `
-          <div class="col-12 text-center text-muted py-4">
-            <i class="bi bi-exclamation-circle fs-2 text-danger opacity-25 d-block mb-2"></i>
-            <span class="small text-danger">Search query failed. Please check network connection.</span>
-          </div>
-        `;
-      }
-    }, 250);
+    resultsContainer.appendChild(cardCol);
   });
 }
 
-// Expose click handler to inline onclicks
-window.openProfileDirectly = async function(studentId) {
+// Expose click handler to global/inline onclick
+window.openProfileDirectly = async function (studentId) {
   const matched = students.find(s => s.id === studentId);
   if (!matched) return;
 
   selectedStudent = matched;
-  
-  // Load progress logs
+
+  // Use cached reports if available to optimize reads
+  if (studentReportsCache[studentId]) {
+    selectedStudentLogs = studentReportsCache[studentId];
+    loadStudentProfileView();
+    return;
+  }
+
+  // Fetch reports from Firestore and store in memory cache
   try {
     selectedStudentLogs = await getStudentReports(madrasaId, studentId);
+    studentReportsCache[studentId] = selectedStudentLogs;
     loadStudentProfileView();
-  } catch (e) {
-    console.error("Error loading profile logs:", e);
+  } catch (err) {
+    console.error("Failed to load reports for student:", studentId, err);
+    showToast("Failed to retrieve progress logs.", "danger");
   }
 };
 
 // ==========================================
 // LEADERBOARD MODULE
 // ==========================================
-window.switchLeaderboardTab = function(tabId) {
+window.switchLeaderboardTab = function (tabId) {
   leaderboardActiveTab = tabId;
-  
+
   // Highlight tab
   document.querySelectorAll("#leaderboardTabs button").forEach(btn => {
     btn.classList.remove("active", "text-success");
@@ -548,11 +432,14 @@ window.switchLeaderboardTab = function(tabId) {
   renderLeaderboardList(tabId);
 };
 
+// Sorted list caching helper
+const leaderboardSortCache = {};
+
 function renderLeaderboardList(tabId) {
   const container = document.getElementById("leaderboardList");
   container.innerHTML = "";
 
-  // Sort local students
+  // Sort and slice top 10 locally
   const sorted = [...students].sort((a, b) => {
     if (tabId === "daily") return (b.dailyScore || 0) - (a.dailyScore || 0);
     if (tabId === "weekly") return (b.weeklyScore || 0) - (a.weeklyScore || 0);
@@ -588,8 +475,8 @@ function renderLeaderboardList(tabId) {
     }
 
     const score = tabId === "daily" ? student.dailyScore :
-                  tabId === "weekly" ? student.weeklyScore :
-                  tabId === "monthly" ? student.monthlyScore : student.score;
+      tabId === "weekly" ? student.weeklyScore :
+        tabId === "monthly" ? student.monthlyScore : student.score;
 
     const badge = student.achievements && student.achievements.length > 0
       ? `<span class="badge bg-success-subtle text-success small rounded-pill" style="font-size: 9px;">${student.achievements[0]}</span>`
@@ -623,13 +510,15 @@ function renderLeaderboardList(tabId) {
 }
 
 // ==========================================
-// PROFILE MODULE RENDERING
+// STUDENT PROFILE PAGE MODULE
 // ==========================================
 function loadStudentProfileView() {
   const s = selectedStudent;
   const logs = selectedStudentLogs;
 
-  // Set top profile cards
+  if (!s) return;
+
+  // Set identity
   document.getElementById("p-childName").textContent = s.name;
   const className = classes.find(c => c.id === s.classId)?.name || "Unassigned";
   document.getElementById("p-childMeta").textContent = `Adm: ${s.admissionNumber} | Class: ${className}`;
@@ -638,12 +527,12 @@ function loadStudentProfileView() {
   document.getElementById("p-childMadrasa").textContent = madrasaDetails.name;
   document.getElementById("p-childPhoto").src = s.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(s.name)}&backgroundColor=10b981`;
 
-  // Calculated Metrics
+  // Statistics calculations
   const totalLogs = logs.length;
   const presentLogs = logs.filter(l => l.attendance === "present" || l.attendance === "leave").length;
   const attPct = totalLogs > 0 ? Math.round((presentLogs / totalLogs) * 100) : 0;
   const completionPct = Math.min(Math.round(((s.currentPage || 1) / 604) * 100), 100);
-  
+
   const currentRank = s.currentRank || 3;
   const previousRank = s.previousRank || 4;
   const rankChange = previousRank - currentRank;
@@ -653,7 +542,6 @@ function loadStudentProfileView() {
   document.getElementById("p-childRank").textContent = `#${currentRank}`;
   document.getElementById("p-childBadgesCount").textContent = (s.achievements || []).length;
 
-  // Standings update
   document.getElementById("p-rankString").textContent = `Rank #${currentRank}`;
   const rChangeBadge = document.getElementById("p-rankChangeBadge");
   if (rankChange > 0) {
@@ -667,45 +555,44 @@ function loadStudentProfileView() {
     rChangeBadge.textContent = "— No Change";
   }
 
-  // Populate Today's Progress Box
-  renderTodayProgressBox(logs);
-
-  // Current Position Status
+  // Position metrics
   document.getElementById("posJuz").textContent = s.currentJuz || 1;
   document.getElementById("posSurah").textContent = s.currentSurah || "Al-Baqarah";
   document.getElementById("posPage").textContent = s.currentPage || 1;
   document.getElementById("posPagesTotal").textContent = s.currentPage || 1;
 
-  // Radial Completion Meter
+  // Animate Completion Ring
   animateCompletionRing(completionPct, s.currentPage || 1);
 
-  // History lists
+  // Today's progress logs
+  renderTodayProgressBox(logs);
+
+  // Render list elements
   renderHistoryTable("full");
-
-  // Chart layouts
-  renderAnalyticsCharts(logs);
-
-  // Timelines
   renderTimelineAchievements(s.achievements || []);
 
-  // Set filter event
+  // Set filter trigger
   const hFilter = document.getElementById("historyFilterSelect");
   hFilter.value = "full";
   hFilter.onchange = () => renderHistoryTable(hFilter.value);
 
-  // Panel Transitions
-  document.getElementById("parent-search-panel").classList.add("d-none");
-  document.getElementById("parent-profile-panel").classList.remove("d-none");
+  // Render Charts
+  renderAnalyticsCharts(logs);
 
-  // Back trigger
+  // Switch to profile layout
+  switchScreen('profile');
+
+  // Back button event setup
   document.getElementById("closeProfileBtn").onclick = () => {
-    document.getElementById("parent-profile-panel").classList.add("d-none");
-    document.getElementById("parent-search-panel").classList.remove("d-none");
-    
-    // Reset search query
+    switchScreen('search');
+
+    // Clear search
     document.getElementById("parentSearchInput").value = "";
     document.getElementById("searchResultsSection").classList.add("d-none");
     document.getElementById("leaderboardSection").classList.remove("d-none");
+
+    selectedStudent = null;
+    selectedStudentLogs = [];
   };
 }
 
@@ -714,11 +601,11 @@ function renderTodayProgressBox(logs) {
   const sabakText = document.getElementById("p-sabakText");
   const sabakRemarks = document.getElementById("p-sabakRemarks");
   const sabakGrade = document.getElementById("p-sabakGrade");
-  
+
   const sabqiText = document.getElementById("p-sabqiText");
   const sabqiRemarks = document.getElementById("p-sabqiRemarks");
   const sabqiGrade = document.getElementById("p-sabqiGrade");
-  
+
   const dawrahText = document.getElementById("p-dawrahText");
   const dawrahRemarks = document.getElementById("p-dawrahRemarks");
   const dawrahGrade = document.getElementById("p-dawrahGrade");
@@ -737,7 +624,6 @@ function renderTodayProgressBox(logs) {
 
   const latest = logs[0];
 
-  // Attendance states
   if (latest.attendance === "present") {
     badge.className = "badge bg-success";
     badge.textContent = "Present Today";
@@ -758,43 +644,46 @@ function renderTodayProgressBox(logs) {
     document.getElementById("p-dawrahBox").className = "d-none";
   }
 
-  // Sabak
+  // Sabak details
   if (latest.newLesson) {
     sabakText.textContent = `${latest.newLesson.surah} (Ayah ${latest.newLesson.fromAyah}-${latest.newLesson.toAyah}) Pg: ${latest.newLesson.pageNumber}`;
     sabakRemarks.textContent = latest.newLesson.remarks || "No feedback logged.";
     sabakGrade.className = `grade-pill grade-${latest.newLesson.grade.toLowerCase()}`;
     sabakGrade.textContent = latest.newLesson.grade;
+    sabakGrade.classList.remove("d-none");
   } else {
     sabakText.textContent = "No new lesson logged today.";
     sabakRemarks.textContent = "";
-    sabakGrade.className = "d-none";
+    sabakGrade.classList.add("d-none");
   }
 
-  // Sabqi
+  // Sabqi details
   if (latest.previousLesson) {
     sabqiText.textContent = `${latest.previousLesson.surah} (Ayah ${latest.previousLesson.fromAyah}-${latest.previousLesson.toAyah})`;
     sabqiRemarks.textContent = latest.previousLesson.remarks || "No feedback logged.";
     sabqiGrade.className = `grade-pill grade-${latest.previousLesson.grade.toLowerCase()}`;
     sabqiGrade.textContent = latest.previousLesson.grade;
+    sabqiGrade.classList.remove("d-none");
   } else {
     sabqiText.textContent = "No previous lesson log today.";
     sabqiRemarks.textContent = "";
-    sabqiGrade.className = "d-none";
+    sabqiGrade.classList.add("d-none");
   }
 
-  // Dawrah
+  // Dawrah details
   if (latest.dawrah) {
     dawrahText.textContent = `Juz ${latest.dawrah.juzNumber} (${latest.dawrah.surah || 'All'} ${latest.dawrah.fromAyah || ''}-${latest.dawrah.toAyah || ''})`;
     dawrahRemarks.textContent = latest.dawrah.remarks || "No feedback logged.";
     dawrahGrade.className = `grade-pill grade-${latest.dawrah.grade.toLowerCase()}`;
     dawrahGrade.textContent = latest.dawrah.grade;
+    dawrahGrade.classList.remove("d-none");
   } else {
     dawrahText.textContent = "No revision log today.";
     dawrahRemarks.textContent = "";
-    dawrahGrade.className = "d-none";
+    dawrahGrade.classList.add("d-none");
   }
 
-  // Trackers
+  // Behaviour and prayers
   akhlaq.textContent = latest.akhlaq || "Good";
   if (latest.salah) {
     let cnt = 0;
@@ -807,18 +696,18 @@ function renderTodayProgressBox(logs) {
 
 function animateCompletionRing(pct, currentPage) {
   const ring = document.getElementById("p-completionRing");
+  if (!ring) return;
   const offset = RING_CIRCUMFERENCE - (pct / 100) * RING_CIRCUMFERENCE;
-  
   ring.style.strokeDashoffset = offset;
   document.getElementById("p-completionRingPct").textContent = pct + "%";
   document.getElementById("p-completionRingRatio").textContent = `${currentPage} of 604 pages`;
 }
 
 // ==========================================
-// DRAW THE 6 REQUIRED CHARTS
+// DRAW ANALYTICS CHARTS (Optimized)
 // ==========================================
 function renderAnalyticsCharts(logs) {
-  // Clear charts context
+  // Destroy previous charts context to avoid canvas overlap exceptions
   if (chartGrades) chartGrades.destroy();
   if (chartGrowth) chartGrowth.destroy();
   if (chartPerformance) chartPerformance.destroy();
@@ -829,7 +718,7 @@ function renderAnalyticsCharts(logs) {
   const chronological = [...logs].reverse();
   const recentLogs = logs.slice(0, 10).reverse();
 
-  // 1. Grade Distribution (Doughnut)
+  // 1. Grade Doughnut
   let ex = 0, gd = 0, av = 0, wk = 0;
   logs.forEach(l => {
     if (l.newLesson?.grade) {
@@ -841,24 +730,27 @@ function renderAnalyticsCharts(logs) {
     }
   });
 
-  chartGrades = new Chart(document.getElementById("c-gradeDistribution").getContext("2d"), {
-    type: 'doughnut',
-    data: {
-      labels: ['Excellent', 'Good', 'Average', 'Weak'],
-      datasets: [{
-        data: [ex, gd, av, wk],
-        backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'],
-        borderWidth: 2
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
-    }
-  });
+  const gradeCtx = document.getElementById("c-gradeDistribution");
+  if (gradeCtx) {
+    chartGrades = new Chart(gradeCtx.getContext("2d"), {
+      type: 'doughnut',
+      data: {
+        labels: ['Excellent', 'Good', 'Average', 'Weak'],
+        datasets: [{
+          data: [ex, gd, av, wk],
+          backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'],
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
+      }
+    });
+  }
 
-  // 2. Memorization Growth (Area Line Chart)
+  // 2. Memorization Growth Area Chart
   const growthLabels = [];
   const growthData = [];
   chronological.forEach(l => {
@@ -868,77 +760,83 @@ function renderAnalyticsCharts(logs) {
     }
   });
 
-  chartGrowth = new Chart(document.getElementById("c-memorizationGrowth").getContext("2d"), {
-    type: 'line',
-    data: {
-      labels: growthLabels.length > 0 ? growthLabels : ['No logs'],
-      datasets: [{
-        label: 'Cumulative Pages',
-        data: growthData.length > 0 ? growthData : [0],
-        borderColor: '#10b981',
-        backgroundColor: 'rgba(16, 185, 129, 0.15)',
-        fill: true,
-        tension: 0.3,
-        borderWidth: 2
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { grid: { color: 'rgba(0,0,0,0.02)' } },
-        x: { grid: { display: false } }
+  const growthCtx = document.getElementById("c-memorizationGrowth");
+  if (growthCtx) {
+    chartGrowth = new Chart(growthCtx.getContext("2d"), {
+      type: 'line',
+      data: {
+        labels: growthLabels.length > 0 ? growthLabels : ['No logs'],
+        datasets: [{
+          label: 'Cumulative Pages',
+          data: growthData.length > 0 ? growthData : [0],
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16, 185, 129, 0.15)',
+          fill: true,
+          tension: 0.3,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { grid: { color: 'rgba(0,0,0,0.02)' } },
+          x: { grid: { display: false } }
+        }
       }
-    }
-  });
+    });
+  }
 
-  // 3. Performance Trend (Rating Line Chart)
-  const performanceLabels = [];
-  const performanceData = [];
+  // 3. Performance Trend
+  const perfLabels = [];
+  const perfData = [];
   recentLogs.forEach(l => {
     if (l.newLesson?.grade) {
-      performanceLabels.push(l.date.substring(5));
+      perfLabels.push(l.date.substring(5));
       const g = l.newLesson.grade.toLowerCase();
       let r = 2; // Average
       if (g === "excellent") r = 4;
       else if (g === "good") r = 3;
       else if (g === "weak") r = 1;
-      performanceData.push(r);
+      perfData.push(r);
     }
   });
 
-  chartPerformance = new Chart(document.getElementById("c-performanceTrend").getContext("2d"), {
-    type: 'line',
-    data: {
-      labels: performanceLabels.length > 0 ? performanceLabels : ['No logs'],
-      datasets: [{
-        data: performanceData.length > 0 ? performanceData : [2],
-        borderColor: '#10b981',
-        pointBackgroundColor: '#059669',
-        borderWidth: 2,
-        tension: 0.2
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: {
-          min: 1, max: 4,
-          ticks: {
-            stepSize: 1,
-            callback: value => ['Weak', 'Average', 'Good', 'Excellent'][value - 1]
+  const perfCtx = document.getElementById("c-performanceTrend");
+  if (perfCtx) {
+    chartPerformance = new Chart(perfCtx.getContext("2d"), {
+      type: 'line',
+      data: {
+        labels: perfLabels.length > 0 ? perfLabels : ['No logs'],
+        datasets: [{
+          data: perfData.length > 0 ? perfData : [2],
+          borderColor: '#10b981',
+          pointBackgroundColor: '#059669',
+          borderWidth: 2,
+          tension: 0.2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            min: 1, max: 4,
+            ticks: {
+              stepSize: 1,
+              callback: value => ['Weak', 'Average', 'Good', 'Excellent'][value - 1]
+            },
+            grid: { color: 'rgba(0,0,0,0.02)' }
           },
-          grid: { color: 'rgba(0,0,0,0.02)' }
-        },
-        x: { grid: { display: false } }
+          x: { grid: { display: false } }
+        }
       }
-    }
-  });
+    });
+  }
 
-  // 4. Attendance Trend (Area Line Chart)
+  // 4. Attendance Area
   const attLabels = recentLogs.map(l => l.date.substring(5));
   const attData = recentLogs.map(l => {
     if (l.attendance === "present") return 1;
@@ -946,41 +844,44 @@ function renderAnalyticsCharts(logs) {
     return 0;
   });
 
-  chartAttendance = new Chart(document.getElementById("c-attendanceTrend").getContext("2d"), {
-    type: 'line',
-    data: {
-      labels: attLabels.length > 0 ? attLabels : ['No logs'],
-      datasets: [{
-        data: attData.length > 0 ? attData : [0],
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59, 130, 246, 0.08)',
-        fill: true,
-        tension: 0.1,
-        borderWidth: 2
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: {
-          min: 0, max: 1,
-          ticks: {
-            stepSize: 0.5,
-            callback: value => value === 1 ? 'Present' : (value === 0.5 ? 'Leave' : 'Absent')
+  const attCtx = document.getElementById("c-attendanceTrend");
+  if (attCtx) {
+    chartAttendance = new Chart(attCtx.getContext("2d"), {
+      type: 'line',
+      data: {
+        labels: attLabels.length > 0 ? attLabels : ['No logs'],
+        datasets: [{
+          data: attData.length > 0 ? attData : [0],
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.08)',
+          fill: true,
+          tension: 0.1,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            min: 0, max: 1,
+            ticks: {
+              stepSize: 0.5,
+              callback: value => value === 1 ? 'Present' : (value === 0.5 ? 'Leave' : 'Absent')
+            },
+            grid: { color: 'rgba(0,0,0,0.02)' }
           },
-          grid: { color: 'rgba(0,0,0,0.02)' }
-        },
-        x: { grid: { display: false } }
+          x: { grid: { display: false } }
+        }
       }
-    }
-  });
+    });
+  }
 
-  // 5. Juz Completion Status (Horizontal Bar)
+  // 5. Juz Completion Horizontal Bar
   const juzKeys = ['Juz 1', 'Juz 2', 'Juz 3', 'Juz 4', 'Juz 5', 'Juz 6', 'Juz 7', 'Juz 8', 'Juz 9', 'Juz 10'];
   const curJuz = selectedStudent.currentJuz || 1;
-  const juzCompletionValues = juzKeys.map((j, i) => {
+  const juzValues = juzKeys.map((j, i) => {
     const idx = i + 1;
     if (idx < curJuz) return 100;
     if (idx === curJuz) {
@@ -990,27 +891,30 @@ function renderAnalyticsCharts(logs) {
     return 0;
   });
 
-  chartJuzProgress = new Chart(document.getElementById("c-juzProgress").getContext("2d"), {
-    type: 'bar',
-    data: {
-      labels: juzKeys,
-      datasets: [{
-        data: juzCompletionValues,
-        backgroundColor: 'rgba(16, 185, 129, 0.75)',
-        borderRadius: 4
-      }]
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { min: 0, max: 100, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(0,0,0,0.02)' } },
-        y: { grid: { display: false } }
+  const juzCtx = document.getElementById("c-juzProgress");
+  if (juzCtx) {
+    chartJuzProgress = new Chart(juzCtx.getContext("2d"), {
+      type: 'bar',
+      data: {
+        labels: juzKeys,
+        datasets: [{
+          data: juzValues,
+          backgroundColor: 'rgba(16, 185, 129, 0.75)',
+          borderRadius: 4
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { min: 0, max: 100, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(0,0,0,0.02)' } },
+          y: { grid: { display: false } }
+        }
       }
-    }
-  });
+    });
+  }
 
   // 6. Monthly Progress Volume
   const monthlyLogsCount = {};
@@ -1022,33 +926,37 @@ function renderAnalyticsCharts(logs) {
   const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthData = monthLabels.map(m => monthlyLogsCount[m] || 0);
 
-  chartMonthlyVolume = new Chart(document.getElementById("c-monthlyVolume").getContext("2d"), {
-    type: 'bar',
-    data: {
-      labels: monthLabels,
-      datasets: [{
-        data: monthData,
-        backgroundColor: '#3b82f6',
-        borderRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.02)' } },
-        x: { grid: { display: false } }
+  const volCtx = document.getElementById("c-monthlyVolume");
+  if (volCtx) {
+    chartMonthlyVolume = new Chart(volCtx.getContext("2d"), {
+      type: 'bar',
+      data: {
+        labels: monthLabels,
+        datasets: [{
+          data: monthData,
+          backgroundColor: '#3b82f6',
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.02)' } },
+          x: { grid: { display: false } }
+        }
       }
-    }
-  });
+    });
+  }
 }
 
 // ==========================================
-// TIMELINE & HISTORY LOGS
+// TIMELINE & LOGS POPULATION
 // ==========================================
 function renderTimelineAchievements(badges) {
   const container = document.getElementById("p-timelineList");
+  if (!container) return;
   container.innerHTML = "";
 
   if (!badges || badges.length === 0) {
@@ -1096,6 +1004,7 @@ function renderTimelineAchievements(badges) {
 
 function renderHistoryTable(filterType) {
   const tbody = document.getElementById("p-historyTableBody");
+  if (!tbody) return;
   tbody.innerHTML = "";
 
   let filtered = [...selectedStudentLogs];
@@ -1116,8 +1025,8 @@ function renderHistoryTable(filterType) {
 
   filtered.forEach(log => {
     const att = log.attendance === "present" ? '<span class="badge bg-success">Present</span>' :
-                log.attendance === "leave" ? '<span class="badge bg-warning text-dark">Leave</span>' :
-                '<span class="badge bg-danger">Absent</span>';
+      log.attendance === "leave" ? '<span class="badge bg-warning text-dark">Leave</span>' :
+        '<span class="badge bg-danger">Absent</span>';
 
     const sabak = log.newLesson ? `${log.newLesson.surah} (${log.newLesson.fromAyah}-${log.newLesson.toAyah})` : "—";
     const sabqi = log.previousLesson ? `${log.previousLesson.surah} (${log.previousLesson.fromAyah}-${log.previousLesson.toAyah})` : "—";
@@ -1134,9 +1043,9 @@ function renderHistoryTable(filterType) {
 }
 
 // ==========================================
-// PDF PRINT COORD
+// PRINTING SYSTEM
 // ==========================================
-window.printSection = function(type) {
+window.printSection = function (type) {
   const s = selectedStudent;
   const logs = selectedStudentLogs;
   const className = classes.find(c => c.id === s.classId)?.name || "Unassigned";
@@ -1148,7 +1057,7 @@ window.printSection = function(type) {
 
   const latest = logs[0];
 
-  // Populate Daily sheet
+  // Daily sheet population
   document.getElementById("print-daily-madrasa").textContent = madrasaDetails.name;
   document.getElementById("print-daily-madrasa-loc").textContent = madrasaDetails.location;
   document.getElementById("print-daily-date").textContent = latest.date;
@@ -1170,7 +1079,7 @@ window.printSection = function(type) {
   document.getElementById("print-daily-dawrah-rem").textContent = latest.dawrah?.remarks || "—";
 
   document.getElementById("print-daily-akhlaq").textContent = latest.akhlaq || "Good";
-  
+
   if (latest.salah) {
     let count = 0;
     Object.values(latest.salah).forEach(val => { if (val) count++; });
@@ -1179,7 +1088,7 @@ window.printSection = function(type) {
     document.getElementById("print-daily-salah").textContent = "Not Tracked Today";
   }
 
-  // Populate Weekly sheet
+  // Weekly sheet population
   document.getElementById("print-weekly-madrasa").textContent = madrasaDetails.name;
   document.getElementById("print-weekly-name").textContent = s.name;
   document.getElementById("print-weekly-adm").textContent = s.admissionNumber;
@@ -1201,7 +1110,7 @@ window.printSection = function(type) {
     `;
   });
 
-  // Populate Monthly sheet
+  // Monthly sheet population
   document.getElementById("print-monthly-madrasa").textContent = madrasaDetails.name;
   document.getElementById("print-monthly-name").textContent = s.name;
   document.getElementById("print-monthly-adm").textContent = s.admissionNumber;
@@ -1225,7 +1134,7 @@ window.printSection = function(type) {
     `;
   });
 
-  // Populate Yearly sheet
+  // Yearly sheet population
   document.getElementById("print-yearly-madrasa").textContent = madrasaDetails.name;
   document.getElementById("print-yearly-date").textContent = new Date().toLocaleDateString();
   document.getElementById("print-yearly-name").textContent = s.name;
@@ -1248,7 +1157,7 @@ window.printSection = function(type) {
     `;
   });
 
-  // Populate History ledger sheet
+  // History statement population
   document.getElementById("print-history-madrasa").textContent = madrasaDetails.name;
   document.getElementById("print-history-name").textContent = s.name;
   document.getElementById("print-history-adm").textContent = s.admissionNumber;
@@ -1272,12 +1181,10 @@ window.printSection = function(type) {
     `;
   });
 
-  // Print
   const targetClass = `print-${type}-sheet`;
   document.body.classList.add(targetClass);
   window.print();
-  
-  // Clean up
+
   setTimeout(() => {
     document.body.classList.remove(targetClass);
   }, 1000);

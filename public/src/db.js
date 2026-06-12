@@ -40,6 +40,22 @@ async function withRetry(operation, maxRetries = 3, initialDelay = 800) {
 }
 
 // ==========================================
+// MADRASA VERIFICATION
+// ==========================================
+export async function verifyMadrasaExists(madrasaId) {
+  if (isOfflineMode) {
+    const mockMadrasas = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
+    return !!mockMadrasas[madrasaId];
+  } else {
+    return withRetry(async () => {
+      const docRef = doc(db, "madrasas", madrasaId);
+      const docSnap = await getDoc(docRef);
+      return docSnap.exists();
+    });
+  }
+}
+
+// ==========================================
 // CLASS MANAGEMENT
 // ==========================================
 export async function getClasses(madrasaId) {
