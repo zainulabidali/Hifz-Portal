@@ -1102,7 +1102,7 @@ window.printSection = function (type) {
     weeklyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
-        <td>${log.attendance.toUpperCase()}</td>
+        <td>${(log.attendance || "").toUpperCase()}</td>
         <td>${sabak}</td>
         <td>${sabqi}</td>
         <td>${log.newLesson?.remarks || log.previousLesson?.remarks || '—'}</td>
@@ -1126,7 +1126,7 @@ window.printSection = function (type) {
     monthlyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
-        <td>${log.attendance.toUpperCase()}</td>
+        <td>${(log.attendance || "").toUpperCase()}</td>
         <td>${sabak}</td>
         <td>${sabqi}</td>
         <td>${dawrah}</td>
@@ -1150,7 +1150,7 @@ window.printSection = function (type) {
     yearlyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
-        <td>${log.attendance.toUpperCase()}</td>
+        <td>${(log.attendance || "").toUpperCase()}</td>
         <td>${sabak}</td>
         <td>${log.newLesson?.remarks || '—'}</td>
       </tr>
@@ -1172,7 +1172,7 @@ window.printSection = function (type) {
     historyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
-        <td>${log.attendance.toUpperCase()}</td>
+        <td>${(log.attendance || "").toUpperCase()}</td>
         <td>${sabak}</td>
         <td>${sabqi}</td>
         <td>${dawrah}</td>

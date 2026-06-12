@@ -209,8 +209,8 @@ export async function loginUser(email, password) {
   if (isOfflineMode) {
     const mockUsers = JSON.parse(localStorage.getItem("mock_users")) || {};
     
-    // Autoseed local Super Admin & Madrasa Admin if empty
-    if (Object.keys(mockUsers).length === 0) {
+    // Autoseed local Super Admin & Madrasa Admin if missing
+    if (!mockUsers["admin@hifzportal.com"] || !mockUsers["usthad@madrasa.com"]) {
       mockUsers["admin@hifzportal.com"] = {
         uid: "super_admin_123",
         email: "admin@hifzportal.com",
@@ -227,16 +227,18 @@ export async function loginUser(email, password) {
       };
       
       const mockMadrasas = JSON.parse(localStorage.getItem("mock_madrasas")) || {};
-      mockMadrasas["madrasa_active_123"] = {
-        name: "Al-Huda Quran Academy",
-        location: "Kochi, Kerala",
-        usthadName: "Usthad Omar",
-        mobile: "9207846064",
-        email: "usthad@madrasa.com",
-        status: "active",
-        createdAt: new Date().toISOString(),
-        subscriptionExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-      };
+      if (!mockMadrasas["madrasa_active_123"]) {
+        mockMadrasas["madrasa_active_123"] = {
+          name: "Al-Huda Quran Academy",
+          location: "Kochi, Kerala",
+          usthadName: "Usthad Omar",
+          mobile: "9207846064",
+          email: "usthad@madrasa.com",
+          status: "active",
+          createdAt: new Date().toISOString(),
+          subscriptionExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        };
+      }
       
       localStorage.setItem("mock_users", JSON.stringify(mockUsers));
       localStorage.setItem("mock_madrasas", JSON.stringify(mockMadrasas));
