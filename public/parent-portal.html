@@ -384,20 +384,6 @@
         </div>
       </div>
 
-      <!-- Leaderboard Position & Rank Change Tracker -->
-      <div class="glass-card mb-3 py-2 px-3 no-print bg-light border-0">
-        <div class="d-flex justify-content-between align-items-center">
-          <div>
-            <i class="bi bi-graph-up-arrow text-success me-2"></i>
-            <span class="small text-muted">Current Standings:</span>
-          </div>
-          <div class="text-end">
-            <strong class="text-dark me-2" id="p-rankString">Rank #3</strong>
-            <span class="badge" id="p-rankChangeBadge">↑ 2 Positions</span>
-          </div>
-        </div>
-      </div>
-
       <!-- Today's Progress Card -->
       <div class="glass-card mb-3 no-print">
         <div class="d-flex justify-content-between align-items-center mb-3">
@@ -409,7 +395,7 @@
           <!-- Sabak -->
           <div class="col-12">
             <div id="p-sabakBox" class="p-2 rounded bg-light border-start border-3 border-success mb-1">
-              <span class="small text-secondary fw-semibold d-block">New Lesson (Sabak)</span>
+              <span class="small text-secondary fw-semibold d-block">Today's New Lesson (Sabak)</span>
               <strong id="p-sabakText" class="d-block mt-1">Surah HUD (Ayah 1-10) - Pg: 221</strong>
               <div class="d-flex justify-content-between align-items-center mt-1">
                 <span class="small text-muted" id="p-sabakRemarks">Excellent fluency</span>
@@ -420,7 +406,7 @@
           <!-- Sabqi -->
           <div class="col-12 col-md-6">
             <div id="p-sabqiBox" class="p-2 rounded bg-light border-start border-3 border-primary mb-1">
-              <span class="small text-secondary fw-semibold d-block">Previous Lesson (Sabqi)</span>
+              <span class="small text-secondary fw-semibold d-block">Revision of Recent Lessons (Sabqi)</span>
               <strong id="p-sabqiText" class="d-block mt-1">Surah Yunus (Ayah 45-60)</strong>
               <div class="d-flex justify-content-between align-items-center mt-1">
                 <span class="small text-muted" id="p-sabqiRemarks">Needs standard corrections</span>
@@ -431,7 +417,7 @@
           <!-- Dawrah -->
           <div class="col-12 col-md-6">
             <div id="p-dawrahBox" class="p-2 rounded bg-light border-start border-3 border-warning mb-1">
-              <span class="small text-secondary fw-semibold d-block">Dawrah / Juz Revision</span>
+              <span class="small text-secondary fw-semibold d-block">Larger Revision (Dawrah)</span>
               <strong id="p-dawrahText" class="d-block mt-1">Juz 11</strong>
               <div class="d-flex justify-content-between align-items-center mt-1">
                 <span class="small text-muted" id="p-dawrahRemarks">Read fluently</span>
@@ -444,11 +430,11 @@
         <!-- Behavior Trackers -->
         <div class="row g-2 mt-3 pt-2 border-top border-light-subtle">
           <div class="col-6">
-            <span class="small text-muted d-block">Behavior Grade (Akhlaq)</span>
+            <span class="small text-muted d-block">Behavior</span>
             <strong id="p-todayAkhlaq" class="text-success">Excellent</strong>
           </div>
           <div class="col-6">
-            <span class="small text-muted d-block">Completed Daily Salahs</span>
+            <span class="small text-muted d-block">Daily Prayers</span>
             <strong id="p-todaySalah" class="text-success">5 / 5 Prayers</strong>
           </div>
         </div>
@@ -456,7 +442,7 @@
 
       <!-- Current Position Status -->
       <div class="glass-card mb-3 no-print">
-        <h5 class="fw-bold mb-3"><i class="bi bi-compass-fill text-success me-2"></i>Current Quran Position</h5>
+        <h5 class="fw-bold mb-3"><i class="bi bi-compass-fill text-success me-2"></i>Current Progress Standing</h5>
         <div class="position-tracker pt-0 bg-transparent border-0 px-0">
           <div class="position-tracker-item">
             <span class="text-success" id="posJuz">0</span>
@@ -478,11 +464,11 @@
       </div>
 
       <!-- ANALYTICS SECTION -->
-      <h5 class="fw-bold mb-3 no-print"><i class="bi bi-bar-chart-line-fill text-success me-2"></i>Performance Analytics</h5>
+      <h5 class="fw-bold mb-3 no-print"><i class="bi bi-bar-chart-line-fill text-success me-2"></i>Quran Progress & Trend</h5>
       
       <div class="row g-3 no-print">
         <!-- Completion Circle (Radial Progress) -->
-        <div class="col-12 col-md-6">
+        <div class="col-12 col-md-4">
           <div class="glass-card mb-0 text-center p-3 h-100">
             <span class="small text-muted fw-semibold d-block mb-3">Quran Memorization Completion</span>
             <div class="progress-ring-container">
@@ -499,62 +485,12 @@
           </div>
         </div>
 
-        <!-- Grade Distribution Doughnut -->
-        <div class="col-12 col-md-6">
-          <div class="glass-card mb-0 p-3 h-100">
-            <span class="small text-muted fw-semibold d-block text-center mb-2">Lesson Grade Distribution</span>
-            <div class="chart-container">
-              <canvas id="c-gradeDistribution"></canvas>
-            </div>
-          </div>
-        </div>
-
         <!-- Memorization Growth Area Chart -->
-        <div class="col-12">
-          <div class="glass-card mb-0 p-3">
-            <span class="small text-muted fw-semibold d-block mb-2">Memorization Growth Tracker (Chronological Pages)</span>
-            <div class="chart-container">
+        <div class="col-12 col-md-8">
+          <div class="glass-card mb-0 p-3 h-100">
+            <span class="small text-muted fw-semibold d-block mb-2">Progress Over Time (Cumulative Pages Memorized)</span>
+            <div class="chart-container" style="position: relative; height: 180px; margin-bottom: 0;">
               <canvas id="c-memorizationGrowth"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <!-- Performance Trend Line -->
-        <div class="col-12 col-md-6">
-          <div class="glass-card mb-0 p-3">
-            <span class="small text-muted fw-semibold d-block mb-2">Weekly Performance Grade Trend</span>
-            <div class="chart-container">
-              <canvas id="c-performanceTrend"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <!-- Attendance Trend Area -->
-        <div class="col-12 col-md-6">
-          <div class="glass-card mb-0 p-3">
-            <span class="small text-muted fw-semibold d-block mb-2">Attendance Trend Log</span>
-            <div class="chart-container">
-              <canvas id="c-attendanceTrend"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <!-- Juz Completion Progress -->
-        <div class="col-12 col-md-6">
-          <div class="glass-card mb-0 p-3 h-100">
-            <span class="small text-muted fw-semibold d-block mb-2">Juz Memorization Status (1-30)</span>
-            <div class="chart-container">
-              <canvas id="c-juzProgress"></canvas>
-            </div>
-          </div>
-        </div>
-
-        <!-- Monthly Progress Bar -->
-        <div class="col-12 col-md-6">
-          <div class="glass-card mb-0 p-3 h-100">
-            <span class="small text-muted fw-semibold d-block mb-2">Monthly Memorized Logs Volume</span>
-            <div class="chart-container">
-              <canvas id="c-monthlyVolume"></canvas>
             </div>
           </div>
         </div>

@@ -509,6 +509,20 @@ window.handleClassDelete = function(classId, name) {
 // ==========================================
 // VIEW RENDERING: 3. STUDENTS
 // ==========================================
+window.toggleStudentDetails = function(studentId) {
+  const detailsDiv = document.getElementById(`details-${studentId}`);
+  const chevron = document.getElementById(`chevron-${studentId}`);
+  if (detailsDiv) {
+    if (detailsDiv.classList.contains("d-none")) {
+      detailsDiv.classList.remove("d-none");
+      chevron.classList.replace("bi-chevron-down", "bi-chevron-up");
+    } else {
+      detailsDiv.classList.add("d-none");
+      chevron.classList.replace("bi-chevron-up", "bi-chevron-down");
+    }
+  }
+};
+
 function renderStudentsView() {
   // Populate dropdown lists
   populateClassDropdowns();
@@ -533,47 +547,57 @@ function renderStudentsView() {
     const avatar = student.photoUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}&backgroundColor=10b981`;
 
     const col = document.createElement("div");
-    col.className = "col-12 col-md-6";
+    col.className = "col-12";
     col.innerHTML = `
-      <div class="glass-card mb-0">
-        <div class="d-flex align-items-center gap-3">
-          <img src="${avatar}" class="student-avatar" alt="${student.name}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}'">
-          <div class="flex-grow-1 min-w-0">
-            <h5 class="fw-bold mb-0 text-truncate">${student.name}</h5>
-            <div class="student-card-meta">
-              <span>Adm: <strong>${student.admissionNumber}</strong></span> | 
-              <span>Class: <strong class="text-success">${className}</strong></span>
-            </div>
-            <div class="student-card-meta mt-1">
-              <i class="bi bi-telephone text-muted me-1"></i>${student.parentPhone} (${student.parentName})
-            </div>
+      <div class="glass-card mb-2 p-3" style="cursor: pointer;" onclick="toggleStudentDetails('${student.id}')">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <h6 class="fw-bold mb-0 text-dark">${student.name}</h6>
+            <span class="text-muted small" style="font-size: 11px;">Admission No: <strong>${student.admissionNumber}</strong></span>
           </div>
-          <div class="d-flex flex-column gap-1">
-            <button class="btn btn-sm btn-outline-success border-0" onclick="openEditStudentModal('${student.id}')">
-              <i class="bi bi-pencil-square"></i>
-            </button>
-            <button class="btn btn-sm btn-outline-danger border-0" onclick="handleStudentDelete('${student.id}', '${student.name}')">
-              <i class="bi bi-trash"></i>
-            </button>
+          <div>
+            <i class="bi bi-chevron-down text-muted" id="chevron-${student.id}"></i>
           </div>
         </div>
 
-        <!-- Position Tracker Ribbon -->
-        <div class="position-tracker">
-          <div class="position-tracker-item">
-            <span class="text-success">${student.currentJuz || 1}</span>
-            Juz
+        <!-- Collapsible Details Container -->
+        <div id="details-${student.id}" class="d-none mt-3 pt-3 border-top border-light-subtle" onclick="event.stopPropagation()">
+          <div class="d-flex align-items-center gap-3">
+            <img src="${avatar}" class="student-avatar" style="width: 50px; height: 50px;" alt="${student.name}" onerror="this.src='https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(student.name)}'">
+            <div class="flex-grow-1 min-w-0">
+              <div class="student-card-meta">
+                Class: <strong class="text-success">${className}</strong>
+              </div>
+              <div class="student-card-meta mt-1" style="font-size: 12px;">
+                <i class="bi bi-telephone text-muted me-1"></i>${student.parentPhone} (${student.parentName})
+              </div>
+            </div>
+            <div class="d-flex flex-column gap-1">
+              <button class="btn btn-sm btn-outline-success border-0 py-1" onclick="openEditStudentModal('${student.id}'); event.stopPropagation();">
+                <i class="bi bi-pencil-square me-1"></i>Edit
+              </button>
+              <button class="btn btn-sm btn-outline-danger border-0 py-1" onclick="handleStudentDelete('${student.id}', '${student.name}'); event.stopPropagation();">
+                <i class="bi bi-trash me-1"></i>Delete
+              </button>
+            </div>
           </div>
-          <div class="position-tracker-item">
-            <span class="text-success">${student.currentSurah || 'Al-Baqarah'}</span>
-            Surah
-          </div>
-          <div class="position-tracker-item">
-            <span class="text-success">${student.currentPage || 1}</span>
-            Page
+
+          <!-- Position Tracker Ribbon -->
+          <div class="position-tracker mt-3">
+            <div class="position-tracker-item">
+              <span class="text-success">${student.currentJuz || 1}</span>
+              Juz
+            </div>
+            <div class="position-tracker-item">
+              <span class="text-success">${student.currentSurah || 'Al-Baqarah'}</span>
+              Surah
+            </div>
+            <div class="position-tracker-item">
+              <span class="text-success">${student.currentPage || 1}</span>
+              Page
+            </div>
           </div>
         </div>
-
       </div>
     `;
     container.appendChild(col);
@@ -914,10 +938,17 @@ async function handlePrevLessonSave(e) {
   const surah = document.getElementById("prevSurah").value.trim();
   const fromAyah = parseInt(document.getElementById("prevFromAyah").value);
   const toAyah = parseInt(document.getElementById("prevToAyah").value);
-  const grade = document.querySelector('input[name="prevGrade"]:checked').value;
+  const grade = document.querySelector('input[name="prevGrade"]:checked')?.value || "Excellent";
   const remarks = document.getElementById("prevRemarks").value.trim();
 
-  const prevLesson = { surah, fromAyah, toAyah, grade, remarks };
+  const prevLesson = surah ? {
+    surah,
+    fromAyah: isNaN(fromAyah) ? null : fromAyah,
+    toAyah: isNaN(toAyah) ? null : toAyah,
+    grade,
+    remarks: remarks || null
+  } : null;
+
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
   const updatedReport = { ...report, date: dateStr, previousLesson: prevLesson };
@@ -982,10 +1013,18 @@ async function handleNewLessonSave(e) {
   const fromAyah = parseInt(document.getElementById("newFromAyah").value);
   const toAyah = parseInt(document.getElementById("newToAyah").value);
   const pageNumber = parseInt(document.getElementById("newPageNumber").value);
-  const grade = document.querySelector('input[name="newGrade"]:checked').value;
+  const grade = document.querySelector('input[name="newGrade"]:checked')?.value || "Excellent";
   const remarks = document.getElementById("newRemarks").value.trim();
 
-  const newLesson = { surah, fromAyah, toAyah, pageNumber, grade, remarks };
+  const newLesson = surah ? {
+    surah,
+    fromAyah: isNaN(fromAyah) ? null : fromAyah,
+    toAyah: isNaN(toAyah) ? null : toAyah,
+    pageNumber: isNaN(pageNumber) ? null : pageNumber,
+    grade,
+    remarks: remarks || null
+  } : null;
+
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
   const updatedReport = { ...report, date: dateStr, newLesson };
@@ -998,13 +1037,13 @@ async function handleNewLessonSave(e) {
   todayReports[studentId] = updatedReport;
   localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
   
-  // Optimistic update student position
+  // Optimistic update student position (only if logged)
   const studentIdx = students.findIndex(s => s.id === studentId);
-  if (studentIdx !== -1) {
+  if (studentIdx !== -1 && newLesson && newLesson.pageNumber) {
     students[studentIdx] = {
       ...students[studentIdx],
-      currentPage: pageNumber,
-      currentSurah: surah
+      currentPage: newLesson.pageNumber,
+      currentSurah: newLesson.surah || students[studentIdx].currentSurah
     };
     localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
   }
@@ -1062,12 +1101,20 @@ async function handleDawrahSave(e) {
   const studentId = document.getElementById("dawrahStudentId").value;
   const juzNumber = parseInt(document.getElementById("dawrahJuz").value);
   const surah = document.getElementById("dawrahSurah").value.trim();
-  const fromAyah = parseInt(document.getElementById("dawrahFromAyah").value) || null;
-  const toAyah = parseInt(document.getElementById("dawrahToAyah").value) || null;
-  const grade = document.querySelector('input[name="dawrahGrade"]:checked').value;
+  const fromAyah = parseInt(document.getElementById("dawrahFromAyah").value);
+  const toAyah = parseInt(document.getElementById("dawrahToAyah").value);
+  const grade = document.querySelector('input[name="dawrahGrade"]:checked')?.value || "Excellent";
   const remarks = document.getElementById("dawrahRemarks").value.trim();
 
-  const dawrah = { juzNumber, surah, fromAyah, toAyah, grade, remarks };
+  const dawrah = (!isNaN(juzNumber) || surah) ? {
+    juzNumber: isNaN(juzNumber) ? null : juzNumber,
+    surah: surah || null,
+    fromAyah: isNaN(fromAyah) ? null : fromAyah,
+    toAyah: isNaN(toAyah) ? null : toAyah,
+    grade,
+    remarks: remarks || null
+  } : null;
+
   const dateStr = getTodayDateString();
   const report = todayReports[studentId] || { date: dateStr, attendance: "present" };
   const updatedReport = { ...report, date: dateStr, dawrah };
@@ -1080,12 +1127,12 @@ async function handleDawrahSave(e) {
   todayReports[studentId] = updatedReport;
   localStorage.setItem(`cache_today_reports_${madrasaId}`, JSON.stringify(todayReports));
 
-  // Optimistic update student currentJuz
+  // Optimistic update student currentJuz (only if logged)
   const studentIdx = students.findIndex(s => s.id === studentId);
-  if (studentIdx !== -1) {
+  if (studentIdx !== -1 && dawrah && dawrah.juzNumber) {
     students[studentIdx] = {
       ...students[studentIdx],
-      currentJuz: juzNumber
+      currentJuz: dawrah.juzNumber
     };
     localStorage.setItem(`cache_students_${madrasaId}`, JSON.stringify(students));
   }
@@ -1273,9 +1320,44 @@ async function renderPerformanceReport() {
                        log.attendance === "leave" ? '<span class="badge bg-warning text-dark">Leave</span>' :
                        '<span class="badge bg-danger">Absent</span>';
 
-      const prevText = log.previousLesson ? `${log.previousLesson.surah} (${log.previousLesson.fromAyah}-${log.previousLesson.toAyah}) - <span class="grade-pill grade-${log.previousLesson.grade.toLowerCase()}">${log.previousLesson.grade}</span>` : '—';
-      const newText = log.newLesson ? `${log.newLesson.surah} (${log.newLesson.fromAyah}-${log.newLesson.toAyah}), Pg: ${log.newLesson.pageNumber} - <span class="grade-pill grade-${log.newLesson.grade.toLowerCase()}">${log.newLesson.grade}</span>` : '—';
-      const dawrahText = log.dawrah ? `Juz ${log.dawrah.juzNumber} (${log.dawrah.surah || 'All'} ${log.dawrah.fromAyah || ''}-${log.dawrah.toAyah || ''}) - <span class="grade-pill grade-${log.dawrah.grade.toLowerCase()}">${log.dawrah.grade}</span>` : '—';
+      const formatLessonText = (l) => {
+        if (!l) return "—";
+        let parts = [];
+        if (l.surah) parts.push(l.surah);
+        if (l.fromAyah !== undefined && l.fromAyah !== null && !isNaN(l.fromAyah)) {
+          parts.push(`(${l.fromAyah}-${l.toAyah || '—'})`);
+        }
+        if (l.pageNumber !== undefined && l.pageNumber !== null && !isNaN(l.pageNumber)) {
+          parts.push(`Pg: ${l.pageNumber}`);
+        }
+        if (l.grade) {
+          parts.push(`- <span class="grade-pill grade-${l.grade.toLowerCase()}">${l.grade}</span>`);
+        }
+        return parts.join(" ") || "—";
+      };
+
+      const formatDawrahText = (d) => {
+        if (!d) return "—";
+        let parts = [];
+        if (d.juzNumber !== undefined && d.juzNumber !== null && !isNaN(d.juzNumber)) {
+          parts.push(`Juz ${d.juzNumber}`);
+        }
+        if (d.surah) {
+          parts.push(`(${d.surah}`);
+          if (d.fromAyah !== undefined && d.fromAyah !== null && !isNaN(d.fromAyah)) {
+            parts.push(`${d.fromAyah}-${d.toAyah || '—'}`);
+          }
+          parts.push(`)`);
+        }
+        if (d.grade) {
+          parts.push(`- <span class="grade-pill grade-${d.grade.toLowerCase()}">${d.grade}</span>`);
+        }
+        return parts.join(" ") || "—";
+      };
+
+      const prevText = formatLessonText(log.previousLesson);
+      const newText = formatLessonText(log.newLesson);
+      const dawrahText = formatDawrahText(log.dawrah);
 
       rowsHtml += `
         <tr>

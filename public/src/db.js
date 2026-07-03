@@ -278,6 +278,91 @@ export async function uploadStudentPhoto(madrasaId, studentId, file) {
 // ==========================================
 // DAILY REPORTS & POSITION TRACKER
 // ==========================================
+// Centralized scoring logic helper for a single daily log
+export function getReportScore(report) {
+  if (!report) return 0;
+  let score = 0;
+  // 1 mark for attendance
+  if (report.attendance === "present") {
+    score += 1;
+  }
+  // 1 mark for Sabaq (new lesson) completed
+  if (report.newLesson && report.newLesson.surah) {
+    score += 1;
+  }
+  // 1 mark for Sabqi (previous lesson) completed
+  if (report.previousLesson && report.previousLesson.surah) {
+    score += 1;
+  }
+  // 1 mark for Dawrah (revision) completed
+  if (report.dawrah && (report.dawrah.juzNumber || report.dawrah.surah)) {
+    score += 1;
+  }
+  return score;
+}
+
+// Calculate scores for a list of daily logs
+export function calculateStudentScoresFromReports(reports) {
+  const today = new Date();
+  const offset = today.getTimezoneOffset();
+  const localToday = new Date(today.getTime() - (offset * 60 * 1000));
+  const todayStr = localToday.toISOString().split("T")[0];
+
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+
+  let dailyScore = 0;
+  let weeklyScore = 0;
+  let monthlyScore = 0;
+  let totalScore = 0;
+
+  reports.forEach(r => {
+    const rScore = getReportScore(r);
+    totalScore += rScore;
+
+    // Daily score (matches today's date)
+    if (r.date === todayStr) {
+      dailyScore += rScore;
+    }
+
+    // Weekly score (last 7 days)
+    const diffMs = nowMs - new Date(r.date).getTime();
+    if (diffMs >= 0 && diffMs <= 7 * oneDayMs) {
+      weeklyScore += rScore;
+    }
+
+    // Monthly score (last 30 days)
+    if (diffMs >= 0 && diffMs <= 30 * oneDayMs) {
+      monthlyScore += rScore;
+    }
+  });
+
+  return {
+    score: totalScore,
+    dailyScore,
+    weeklyScore,
+    monthlyScore
+  };
+}
+
+// Update student scores in storage and db
+export async function updateStudentScores(madrasaId, studentId) {
+  const reports = await getStudentReports(madrasaId, studentId, true);
+  const scoreData = calculateStudentScoresFromReports(reports);
+
+  if (isOfflineMode) {
+    const students = JSON.parse(localStorage.getItem(`mock_students_${madrasaId}`)) || {};
+    if (students[studentId]) {
+      students[studentId] = { ...students[studentId], ...scoreData };
+      localStorage.setItem(`mock_students_${madrasaId}`, JSON.stringify(students));
+    }
+  } else {
+    const studentRef = doc(db, "madrasas", madrasaId, "students", studentId);
+    await updateDoc(studentRef, scoreData);
+  }
+  return scoreData;
+}
+
 export async function saveDailyReport(madrasaId, studentId, reportData) {
   const dateStr = reportData.date; // YYYY-MM-DD
   
@@ -317,6 +402,8 @@ export async function saveDailyReport(madrasaId, studentId, reportData) {
       }
       localStorage.setItem(`mock_students_${madrasaId}`, JSON.stringify(students));
     }
+    // Update student scores locally
+    await updateStudentScores(madrasaId, studentId);
     return reportData;
   } else {
     return withRetry(async () => {
@@ -325,8 +412,8 @@ export async function saveDailyReport(madrasaId, studentId, reportData) {
       await setDoc(reportRef, reportData);
 
       // Update student current position in transaction/batch (or updateDoc)
+      const updateData = {};
       if (reportData.attendance !== "absent") {
-        const updateData = {};
         if (reportData.newLesson && reportData.newLesson.pageNumber) {
           updateData.currentPage = parseInt(reportData.newLesson.pageNumber);
           updateData.currentSurah = reportData.newLesson.surah;
@@ -334,12 +421,15 @@ export async function saveDailyReport(madrasaId, studentId, reportData) {
         if (reportData.dawrah && reportData.dawrah.juzNumber) {
           updateData.currentJuz = parseInt(reportData.dawrah.juzNumber);
         }
-        
-        if (Object.keys(updateData).length > 0) {
-          const studentRef = doc(db, "madrasas", madrasaId, "students", studentId);
-          await updateDoc(studentRef, updateData);
-        }
       }
+      
+      // Calculate scores dynamically and write to student document
+      const reports = await getStudentReports(madrasaId, studentId, true);
+      const scores = calculateStudentScoresFromReports(reports);
+      Object.assign(updateData, scores);
+
+      const studentRef = doc(db, "madrasas", madrasaId, "students", studentId);
+      await updateDoc(studentRef, updateData);
     });
   }
 }

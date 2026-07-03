@@ -1,4 +1,4 @@
-import { getStudentReports } from "./db.js";
+import { getStudentReports, calculateStudentScoresFromReports, updateStudentScores } from "./db.js";
 import { isOfflineMode, db } from "../firebase-config.js";
 import { showToast } from "./ui-notifications.js";
 import {
@@ -26,12 +26,7 @@ let leaderboardActiveTab = "daily";
 const studentReportsCache = {};
 
 // Chart.js instances
-let chartGrades = null;
 let chartGrowth = null;
-let chartPerformance = null;
-let chartAttendance = null;
-let chartJuzProgress = null;
-let chartMonthlyVolume = null;
 
 const RING_CIRCUMFERENCE = 377; // 2 * PI * 60
 
@@ -223,12 +218,20 @@ function handleInitialLoadNetworkError(error) {
 // Helper to seed scores/ranks if missing
 function seedRanksAndScores(studentList) {
   studentList.forEach(s => {
-    s.score = s.score || ((s.currentPage || 1) * 10 + (s.achievements || []).length * 50);
-    s.dailyScore = s.dailyScore || (Math.round(s.score * 0.1) + Math.floor(Math.random() * 20));
-    s.weeklyScore = s.weeklyScore || (Math.round(s.score * 0.4) + Math.floor(Math.random() * 50));
-    s.monthlyScore = s.monthlyScore || (Math.round(s.score * 0.8) + Math.floor(Math.random() * 100));
-    s.currentRank = s.currentRank || (Math.floor(Math.random() * 8) + 1);
-    s.previousRank = s.previousRank || (s.currentRank + (Math.random() > 0.5 ? 1 : -1));
+    s.score = s.score || 0;
+    s.dailyScore = s.dailyScore || 0;
+    s.weeklyScore = s.weeklyScore || 0;
+    s.monthlyScore = s.monthlyScore || 0;
+  });
+
+  // Assign ranks dynamically based on total score descending
+  const sorted = [...studentList].sort((a, b) => (b.score || 0) - (a.score || 0));
+  sorted.forEach((student, index) => {
+    const s = studentList.find(x => x.id === student.id);
+    if (s) {
+      s.currentRank = index + 1;
+      s.previousRank = s.previousRank || (index + 1);
+    }
   });
 }
 
@@ -533,27 +536,12 @@ function loadStudentProfileView() {
   const attPct = totalLogs > 0 ? Math.round((presentLogs / totalLogs) * 100) : 0;
   const completionPct = Math.min(Math.round(((s.currentPage || 1) / 604) * 100), 100);
 
-  const currentRank = s.currentRank || 3;
-  const previousRank = s.previousRank || 4;
-  const rankChange = previousRank - currentRank;
+  const currentRank = s.currentRank || 1;
 
   document.getElementById("p-childAttendancePct").textContent = attPct + "%";
   document.getElementById("p-childCompletionPct").textContent = completionPct + "%";
   document.getElementById("p-childRank").textContent = `#${currentRank}`;
   document.getElementById("p-childBadgesCount").textContent = (s.achievements || []).length;
-
-  document.getElementById("p-rankString").textContent = `Rank #${currentRank}`;
-  const rChangeBadge = document.getElementById("p-rankChangeBadge");
-  if (rankChange > 0) {
-    rChangeBadge.className = "badge bg-success-subtle text-success border border-success-subtle";
-    rChangeBadge.textContent = `↑ ${rankChange} Positions`;
-  } else if (rankChange < 0) {
-    rChangeBadge.className = "badge bg-danger-subtle text-danger border border-danger-subtle";
-    rChangeBadge.textContent = `↓ ${Math.abs(rankChange)} Positions`;
-  } else {
-    rChangeBadge.className = "badge bg-secondary-subtle text-secondary border border-secondary-subtle";
-    rChangeBadge.textContent = "— No Change";
-  }
 
   // Position metrics
   document.getElementById("posJuz").textContent = s.currentJuz || 1;
@@ -578,6 +566,26 @@ function loadStudentProfileView() {
 
   // Render Charts
   renderAnalyticsCharts(logs);
+
+  // Background self-healing score update using real reports data
+  if (logs.length > 0) {
+    const freshScores = calculateStudentScoresFromReports(logs);
+    const scoresChanged = freshScores.score !== s.score || freshScores.dailyScore !== s.dailyScore || freshScores.weeklyScore !== s.weeklyScore || freshScores.monthlyScore !== s.monthlyScore;
+    if (scoresChanged) {
+      // Update local state
+      s.score = freshScores.score;
+      s.dailyScore = freshScores.dailyScore;
+      s.weeklyScore = freshScores.weeklyScore;
+      s.monthlyScore = freshScores.monthlyScore;
+      // Re-assign ranks and update DB
+      seedRanksAndScores(students);
+      updateStudentScores(madrasaId, s.id).catch(err => console.error("Error healing student scores:", err));
+      // Refresh rankings UI
+      if (leaderboardActiveTab) renderLeaderboardList(leaderboardActiveTab);
+      // Refresh top rank metric on card
+      document.getElementById("p-childRank").textContent = `#${s.currentRank || 1}`;
+    }
+  }
 
   // Switch to profile layout
   switchScreen('profile');
@@ -646,11 +654,24 @@ function renderTodayProgressBox(logs) {
 
   // Sabak details
   if (latest.newLesson) {
-    sabakText.textContent = `${latest.newLesson.surah} (Ayah ${latest.newLesson.fromAyah}-${latest.newLesson.toAyah}) Pg: ${latest.newLesson.pageNumber}`;
-    sabakRemarks.textContent = latest.newLesson.remarks || "No feedback logged.";
-    sabakGrade.className = `grade-pill grade-${latest.newLesson.grade.toLowerCase()}`;
-    sabakGrade.textContent = latest.newLesson.grade;
-    sabakGrade.classList.remove("d-none");
+    const lesson = latest.newLesson;
+    let parts = [];
+    if (lesson.surah) parts.push(lesson.surah);
+    if (lesson.fromAyah !== undefined && lesson.fromAyah !== null && !isNaN(lesson.fromAyah)) {
+      parts.push(`(Ayah ${lesson.fromAyah}-${lesson.toAyah || '—'})`);
+    }
+    if (lesson.pageNumber !== undefined && lesson.pageNumber !== null && !isNaN(lesson.pageNumber)) {
+      parts.push(`Pg: ${lesson.pageNumber}`);
+    }
+    sabakText.textContent = parts.join(" ") || "Lesson details not logged.";
+    sabakRemarks.textContent = lesson.remarks || "No feedback logged.";
+    if (lesson.grade) {
+      sabakGrade.className = `grade-pill grade-${lesson.grade.toLowerCase()}`;
+      sabakGrade.textContent = lesson.grade;
+      sabakGrade.classList.remove("d-none");
+    } else {
+      sabakGrade.classList.add("d-none");
+    }
   } else {
     sabakText.textContent = "No new lesson logged today.";
     sabakRemarks.textContent = "";
@@ -659,11 +680,21 @@ function renderTodayProgressBox(logs) {
 
   // Sabqi details
   if (latest.previousLesson) {
-    sabqiText.textContent = `${latest.previousLesson.surah} (Ayah ${latest.previousLesson.fromAyah}-${latest.previousLesson.toAyah})`;
-    sabqiRemarks.textContent = latest.previousLesson.remarks || "No feedback logged.";
-    sabqiGrade.className = `grade-pill grade-${latest.previousLesson.grade.toLowerCase()}`;
-    sabqiGrade.textContent = latest.previousLesson.grade;
-    sabqiGrade.classList.remove("d-none");
+    const lesson = latest.previousLesson;
+    let parts = [];
+    if (lesson.surah) parts.push(lesson.surah);
+    if (lesson.fromAyah !== undefined && lesson.fromAyah !== null && !isNaN(lesson.fromAyah)) {
+      parts.push(`(Ayah ${lesson.fromAyah}-${lesson.toAyah || '—'})`);
+    }
+    sabqiText.textContent = parts.join(" ") || "Revision details not logged.";
+    sabqiRemarks.textContent = lesson.remarks || "No feedback logged.";
+    if (lesson.grade) {
+      sabqiGrade.className = `grade-pill grade-${lesson.grade.toLowerCase()}`;
+      sabqiGrade.textContent = lesson.grade;
+      sabqiGrade.classList.remove("d-none");
+    } else {
+      sabqiGrade.classList.add("d-none");
+    }
   } else {
     sabqiText.textContent = "No previous lesson log today.";
     sabqiRemarks.textContent = "";
@@ -672,11 +703,27 @@ function renderTodayProgressBox(logs) {
 
   // Dawrah details
   if (latest.dawrah) {
-    dawrahText.textContent = `Juz ${latest.dawrah.juzNumber} (${latest.dawrah.surah || 'All'} ${latest.dawrah.fromAyah || ''}-${latest.dawrah.toAyah || ''})`;
-    dawrahRemarks.textContent = latest.dawrah.remarks || "No feedback logged.";
-    dawrahGrade.className = `grade-pill grade-${latest.dawrah.grade.toLowerCase()}`;
-    dawrahGrade.textContent = latest.dawrah.grade;
-    dawrahGrade.classList.remove("d-none");
+    const d = latest.dawrah;
+    let parts = [];
+    if (d.juzNumber !== undefined && d.juzNumber !== null && !isNaN(d.juzNumber)) {
+      parts.push(`Juz ${d.juzNumber}`);
+    }
+    if (d.surah) {
+      parts.push(`(${d.surah}`);
+      if (d.fromAyah !== undefined && d.fromAyah !== null && !isNaN(d.fromAyah)) {
+        parts.push(`${d.fromAyah}-${d.toAyah || '—'}`);
+      }
+      parts.push(`)`);
+    }
+    dawrahText.textContent = parts.join(" ") || "Revision details not logged.";
+    dawrahRemarks.textContent = d.remarks || "No feedback logged.";
+    if (d.grade) {
+      dawrahGrade.className = `grade-pill grade-${d.grade.toLowerCase()}`;
+      dawrahGrade.textContent = d.grade;
+      dawrahGrade.classList.remove("d-none");
+    } else {
+      dawrahGrade.classList.add("d-none");
+    }
   } else {
     dawrahText.textContent = "No revision log today.";
     dawrahRemarks.textContent = "";
@@ -707,54 +754,16 @@ function animateCompletionRing(pct, currentPage) {
 // DRAW ANALYTICS CHARTS (Optimized)
 // ==========================================
 function renderAnalyticsCharts(logs) {
-  // Destroy previous charts context to avoid canvas overlap exceptions
-  if (chartGrades) chartGrades.destroy();
+  // Destroy previous chart to avoid canvas overlap exceptions
   if (chartGrowth) chartGrowth.destroy();
-  if (chartPerformance) chartPerformance.destroy();
-  if (chartAttendance) chartAttendance.destroy();
-  if (chartJuzProgress) chartJuzProgress.destroy();
-  if (chartMonthlyVolume) chartMonthlyVolume.destroy();
 
   const chronological = [...logs].reverse();
-  const recentLogs = logs.slice(0, 10).reverse();
 
-  // 1. Grade Doughnut
-  let ex = 0, gd = 0, av = 0, wk = 0;
-  logs.forEach(l => {
-    if (l.newLesson?.grade) {
-      const g = l.newLesson.grade.toLowerCase();
-      if (g === "excellent") ex++;
-      else if (g === "good") gd++;
-      else if (g === "average") av++;
-      else if (g === "weak") wk++;
-    }
-  });
-
-  const gradeCtx = document.getElementById("c-gradeDistribution");
-  if (gradeCtx) {
-    chartGrades = new Chart(gradeCtx.getContext("2d"), {
-      type: 'doughnut',
-      data: {
-        labels: ['Excellent', 'Good', 'Average', 'Weak'],
-        datasets: [{
-          data: [ex, gd, av, wk],
-          backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444'],
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } } }
-      }
-    });
-  }
-
-  // 2. Memorization Growth Area Chart
+  // Memorization Growth Area Chart
   const growthLabels = [];
   const growthData = [];
   chronological.forEach(l => {
-    if (l.newLesson?.pageNumber) {
+    if (l.newLesson && l.newLesson.pageNumber && !isNaN(l.newLesson.pageNumber)) {
       growthLabels.push(l.date.substring(5)); // MM-DD
       growthData.push(l.newLesson.pageNumber);
     }
@@ -782,168 +791,6 @@ function renderAnalyticsCharts(logs) {
         plugins: { legend: { display: false } },
         scales: {
           y: { grid: { color: 'rgba(0,0,0,0.02)' } },
-          x: { grid: { display: false } }
-        }
-      }
-    });
-  }
-
-  // 3. Performance Trend
-  const perfLabels = [];
-  const perfData = [];
-  recentLogs.forEach(l => {
-    if (l.newLesson?.grade) {
-      perfLabels.push(l.date.substring(5));
-      const g = l.newLesson.grade.toLowerCase();
-      let r = 2; // Average
-      if (g === "excellent") r = 4;
-      else if (g === "good") r = 3;
-      else if (g === "weak") r = 1;
-      perfData.push(r);
-    }
-  });
-
-  const perfCtx = document.getElementById("c-performanceTrend");
-  if (perfCtx) {
-    chartPerformance = new Chart(perfCtx.getContext("2d"), {
-      type: 'line',
-      data: {
-        labels: perfLabels.length > 0 ? perfLabels : ['No logs'],
-        datasets: [{
-          data: perfData.length > 0 ? perfData : [2],
-          borderColor: '#10b981',
-          pointBackgroundColor: '#059669',
-          borderWidth: 2,
-          tension: 0.2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: {
-            min: 1, max: 4,
-            ticks: {
-              stepSize: 1,
-              callback: value => ['Weak', 'Average', 'Good', 'Excellent'][value - 1]
-            },
-            grid: { color: 'rgba(0,0,0,0.02)' }
-          },
-          x: { grid: { display: false } }
-        }
-      }
-    });
-  }
-
-  // 4. Attendance Area
-  const attLabels = recentLogs.map(l => l.date.substring(5));
-  const attData = recentLogs.map(l => {
-    if (l.attendance === "present") return 1;
-    if (l.attendance === "leave") return 0.5;
-    return 0;
-  });
-
-  const attCtx = document.getElementById("c-attendanceTrend");
-  if (attCtx) {
-    chartAttendance = new Chart(attCtx.getContext("2d"), {
-      type: 'line',
-      data: {
-        labels: attLabels.length > 0 ? attLabels : ['No logs'],
-        datasets: [{
-          data: attData.length > 0 ? attData : [0],
-          borderColor: '#3b82f6',
-          backgroundColor: 'rgba(59, 130, 246, 0.08)',
-          fill: true,
-          tension: 0.1,
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: {
-            min: 0, max: 1,
-            ticks: {
-              stepSize: 0.5,
-              callback: value => value === 1 ? 'Present' : (value === 0.5 ? 'Leave' : 'Absent')
-            },
-            grid: { color: 'rgba(0,0,0,0.02)' }
-          },
-          x: { grid: { display: false } }
-        }
-      }
-    });
-  }
-
-  // 5. Juz Completion Horizontal Bar
-  const juzKeys = ['Juz 1', 'Juz 2', 'Juz 3', 'Juz 4', 'Juz 5', 'Juz 6', 'Juz 7', 'Juz 8', 'Juz 9', 'Juz 10'];
-  const curJuz = selectedStudent.currentJuz || 1;
-  const juzValues = juzKeys.map((j, i) => {
-    const idx = i + 1;
-    if (idx < curJuz) return 100;
-    if (idx === curJuz) {
-      const pageOffset = (selectedStudent.currentPage || 1) % 20;
-      return Math.round((pageOffset / 20) * 100);
-    }
-    return 0;
-  });
-
-  const juzCtx = document.getElementById("c-juzProgress");
-  if (juzCtx) {
-    chartJuzProgress = new Chart(juzCtx.getContext("2d"), {
-      type: 'bar',
-      data: {
-        labels: juzKeys,
-        datasets: [{
-          data: juzValues,
-          backgroundColor: 'rgba(16, 185, 129, 0.75)',
-          borderRadius: 4
-        }]
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { min: 0, max: 100, ticks: { callback: v => v + '%' }, grid: { color: 'rgba(0,0,0,0.02)' } },
-          y: { grid: { display: false } }
-        }
-      }
-    });
-  }
-
-  // 6. Monthly Progress Volume
-  const monthlyLogsCount = {};
-  logs.forEach(l => {
-    const month = new Date(l.date).toLocaleString('default', { month: 'short' });
-    monthlyLogsCount[month] = (monthlyLogsCount[month] || 0) + 1;
-  });
-
-  const monthLabels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const monthData = monthLabels.map(m => monthlyLogsCount[m] || 0);
-
-  const volCtx = document.getElementById("c-monthlyVolume");
-  if (volCtx) {
-    chartMonthlyVolume = new Chart(volCtx.getContext("2d"), {
-      type: 'bar',
-      data: {
-        labels: monthLabels,
-        datasets: [{
-          data: monthData,
-          backgroundColor: '#3b82f6',
-          borderRadius: 4
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.02)' } },
           x: { grid: { display: false } }
         }
       }
@@ -1057,6 +904,36 @@ window.printSection = function (type) {
 
   const latest = logs[0];
 
+  // Helper formatters
+  const formatLesson = (l) => {
+    if (!l) return "—";
+    let parts = [];
+    if (l.surah) parts.push(l.surah);
+    if (l.fromAyah !== undefined && l.fromAyah !== null && !isNaN(l.fromAyah)) {
+      parts.push(`(${l.fromAyah}-${l.toAyah || '—'})`);
+    }
+    if (l.pageNumber !== undefined && l.pageNumber !== null && !isNaN(l.pageNumber)) {
+      parts.push(`Pg: ${l.pageNumber}`);
+    }
+    return parts.join(" ") || "—";
+  };
+
+  const formatDawrah = (d) => {
+    if (!d) return "—";
+    let parts = [];
+    if (d.juzNumber !== undefined && d.juzNumber !== null && !isNaN(d.juzNumber)) {
+      parts.push(`Juz ${d.juzNumber}`);
+    }
+    if (d.surah) {
+      parts.push(`(${d.surah}`);
+      if (d.fromAyah !== undefined && d.fromAyah !== null && !isNaN(d.fromAyah)) {
+        parts.push(`${d.fromAyah}-${d.toAyah || '—'}`);
+      }
+      parts.push(`)`);
+    }
+    return parts.join(" ") || "—";
+  };
+
   // Daily sheet population
   document.getElementById("print-daily-madrasa").textContent = madrasaDetails.name;
   document.getElementById("print-daily-madrasa-loc").textContent = madrasaDetails.location;
@@ -1066,15 +943,15 @@ window.printSection = function (type) {
   document.getElementById("print-daily-class").textContent = className;
   document.getElementById("print-daily-pos").textContent = `Juz ${s.currentJuz || 1} | Surah ${s.currentSurah || 'Al-Baqarah'} | Pg ${s.currentPage || 1}`;
 
-  document.getElementById("print-daily-sabak-det").textContent = latest.newLesson ? `${latest.newLesson.surah} (${latest.newLesson.fromAyah}-${latest.newLesson.toAyah}) Pg: ${latest.newLesson.pageNumber}` : "No new lesson logged.";
+  document.getElementById("print-daily-sabak-det").textContent = formatLesson(latest.newLesson);
   document.getElementById("print-daily-sabak-grd").textContent = latest.newLesson?.grade || "—";
   document.getElementById("print-daily-sabak-rem").textContent = latest.newLesson?.remarks || "—";
 
-  document.getElementById("print-daily-sabqi-det").textContent = latest.previousLesson ? `${latest.previousLesson.surah} (${latest.previousLesson.fromAyah}-${latest.previousLesson.toAyah})` : "No previous lesson log.";
+  document.getElementById("print-daily-sabqi-det").textContent = formatLesson(latest.previousLesson);
   document.getElementById("print-daily-sabqi-grd").textContent = latest.previousLesson?.grade || "—";
   document.getElementById("print-daily-sabqi-rem").textContent = latest.previousLesson?.remarks || "—";
 
-  document.getElementById("print-daily-dawrah-det").textContent = latest.dawrah ? `Juz ${latest.dawrah.juzNumber} (${latest.dawrah.surah || ''} ${latest.dawrah.fromAyah || ''}-${latest.dawrah.toAyah || ''})` : "No dawrah log.";
+  document.getElementById("print-daily-dawrah-det").textContent = formatDawrah(latest.dawrah);
   document.getElementById("print-daily-dawrah-grd").textContent = latest.dawrah?.grade || "—";
   document.getElementById("print-daily-dawrah-rem").textContent = latest.dawrah?.remarks || "—";
 
@@ -1097,8 +974,8 @@ window.printSection = function (type) {
   const weeklyTbody = document.getElementById("print-weekly-table-body");
   weeklyTbody.innerHTML = "";
   logs.slice(0, 15).forEach(log => {
-    const sabak = log.newLesson ? `${log.newLesson.surah} (${log.newLesson.fromAyah}-${log.newLesson.toAyah})` : "—";
-    const sabqi = log.previousLesson ? `${log.previousLesson.surah} (${log.previousLesson.fromAyah}-${log.previousLesson.toAyah})` : "—";
+    const sabak = formatLesson(log.newLesson);
+    const sabqi = formatLesson(log.previousLesson);
     weeklyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
@@ -1120,9 +997,9 @@ window.printSection = function (type) {
   const monthlyTbody = document.getElementById("print-monthly-table-body");
   monthlyTbody.innerHTML = "";
   logs.slice(0, 30).forEach(log => {
-    const sabak = log.newLesson ? `${log.newLesson.surah} (${log.newLesson.fromAyah}-${log.newLesson.toAyah})` : "—";
-    const sabqi = log.previousLesson ? `${log.previousLesson.surah} (${log.previousLesson.fromAyah}-${log.previousLesson.toAyah})` : "—";
-    const dawrah = log.dawrah ? `Juz ${log.dawrah.juzNumber}` : "—";
+    const sabak = formatLesson(log.newLesson);
+    const sabqi = formatLesson(log.previousLesson);
+    const dawrah = formatDawrah(log.dawrah);
     monthlyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
@@ -1146,7 +1023,7 @@ window.printSection = function (type) {
   const yearlyTbody = document.getElementById("print-yearly-table-body");
   yearlyTbody.innerHTML = "";
   logs.slice(0, 100).forEach(log => {
-    const sabak = log.newLesson ? `${log.newLesson.surah} (Ayah ${log.newLesson.fromAyah}-${log.newLesson.toAyah}) Pg: ${log.newLesson.pageNumber}` : "—";
+    const sabak = formatLesson(log.newLesson);
     yearlyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
@@ -1166,9 +1043,9 @@ window.printSection = function (type) {
   const historyTbody = document.getElementById("print-history-table-body");
   historyTbody.innerHTML = "";
   logs.forEach(log => {
-    const sabak = log.newLesson ? `${log.newLesson.surah} (Ayah ${log.newLesson.fromAyah}-${log.newLesson.toAyah})` : "—";
-    const sabqi = log.previousLesson ? `${log.previousLesson.surah} (Ayah ${log.previousLesson.fromAyah}-${log.previousLesson.toAyah})` : "—";
-    const dawrah = log.dawrah ? `Juz ${log.dawrah.juzNumber}` : "—";
+    const sabak = formatLesson(log.newLesson);
+    const sabqi = formatLesson(log.previousLesson);
+    const dawrah = formatDawrah(log.dawrah);
     historyTbody.innerHTML += `
       <tr>
         <td>${log.date}</td>
