@@ -108,6 +108,11 @@ async function startInitialLoad() {
   document.getElementById("parent-loading-title").textContent = "Connecting to Portal...";
   document.getElementById("parent-loading-message").textContent = "Verifying database connections and gathering reports.";
 
+  if (!madrasaId) {
+    switchScreen('invalid-link');
+    return;
+  }
+
   try {
     const exists = await fetchInitialData();
     if (!exists) {
